@@ -1,6 +1,8 @@
+#pragma once
 #include "utils/utils.hpp"
 #include <optional>
 #include <string>
+#include <string_view>
 #define DEFINE_CONFIG_PATH(NAME, FILE) \
     static constexpr auto NAME##_ARR = utils::concat(ROOT_DIR, FILE); \
     static constexpr std::string_view NAME(NAME##_ARR.data());
@@ -12,6 +14,7 @@ DEFINE_CONFIG_PATH(HERO_CONFIG_PATH, "/config/hero.yaml")
 DEFINE_CONFIG_PATH(UAV_CONFIG_PATH, "/config/uav.yaml")
 DEFINE_CONFIG_PATH(DONG_CONFIG_PATH, "/config/dong.yaml")
 DEFINE_CONFIG_PATH(RMUC_2026_POINT_CONFIG_PATH, "/config/rmuc_2026_map_point.yaml")
+#undef DEFINE_CONFIG_PATH
 inline std::optional<std::string> get_robot_config_path(std::string name) {
     auto key = utils::to_upper(name);
     if (key == "OMNI") {

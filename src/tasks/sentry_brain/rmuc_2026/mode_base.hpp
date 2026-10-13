@@ -15,10 +15,12 @@
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/subscription.hpp>
 #include <string>
+#include <string_view>
 #define DEFINE_CONFIG_PATH(NAME, FILE) \
     static constexpr auto NAME##_ARR = awakening::utils::concat(ROOT_DIR, FILE); \
     static constexpr std::string_view NAME(NAME##_ARR.data());
 DEFINE_CONFIG_PATH(RMUC_2026_POINT_CONFIG_PATH, "/config/rmuc_2026_map_point.yaml")
+#undef DEFINE_CONFIG_PATH
 namespace awakening::sentry_brain {
 class ModeBase {
 public:
