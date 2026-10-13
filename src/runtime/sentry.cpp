@@ -33,6 +33,9 @@
 #include "runtime/config.hpp"
 #include "tasks/auto_aim/armor_control/very_aimer.hpp"
 #include "utils/drivers/camera_factory.hpp"
+#include "utils/drivers/command_protocol.hpp"
+#include "utils/drivers/serial_driver.hpp"
+#include "utils/drivers/telemetry_protocol.hpp"
 #include "utils/semaphore_guard.hpp"
 #include "utils/signal_guard.hpp"
 namespace backward {
@@ -141,7 +144,6 @@ static constexpr auto RECORD_FOLDER_PATH_ARR = utils::concat(ROOT_DIR, "/record/
 static constexpr std::string_view RECORD_FOLDER_PATH(RECORD_FOLDER_PATH_ARR.data());
 
 int main(int argc, char** argv) {
-    auto start_tp = Clock::now();
     print_banner();
     auto& signal = utils::SignalGuard::instance();
     logger::init(spdlog::level::trace);
@@ -293,6 +295,10 @@ int main(int argc, char** argv) {
         });
     }
     auto serial_send_to_image_microseconds = config["serial_send_to_image_microseconds"].as<int>();
+    // 同济状态回传的消息 ID，必须与下位机 InitParam() 的注册一致（见 config/sentry.yaml）。
+    const int telemetry_gimbal_id = config["serial"]["telemetry_gimbal_id"].as<int>(-1);
+    const int telemetry_shoot_id = config["serial"]["telemetry_shoot_id"].as<int>(-1);
+    const int telemetry_frame_timeout_ms = config["serial"]["frame_timeout_ms"].as<int>(1000);
 
     s.register_task<CameraIO, CommonFrameIo>("push_common_frame", [&](CameraIO::second_type&& f) {
         static int current_id = 0;
@@ -313,75 +319,60 @@ int main(int argc, char** argv) {
     if (serial) {
         s.register_task<SerialIO>("receive_serial", [&](SerialIO::second_type&& data) {
             static std::mutex mutex;
+            // 下位机约 1kHz 连续发送 30 字节定长帧（int16 长度 + [int16 ID][payload]）：
+            //   ID 1 -> {float yaw, float pitch, float roll, int32 mode, int32 robot_id}（角度单位「度」）
+            //   ID 2 -> {float bullet_speed}
+            static TelemetryStream stream(std::chrono::milliseconds(telemetry_frame_timeout_ms));
             std::lock_guard<std::mutex> lock(mutex);
-            auto now = Clock::now();
 
-            log_ctx.serial_count++;
-            if (auto robo_opt = ReceiveRobotData::create(data); robo_opt.has_value()) {
-                auto robo = robo_opt.value();
-                static uint32_t last_pc = -1, delay = 0, last_bullet_count = 0;
-                if (robo.time_stamp_pc != last_pc) {
-                    last_pc = robo.time_stamp_pc;
-                    delay = (std::chrono::duration_cast<std::chrono::microseconds>(now - start_tp)
-                                 .count()
-                             - robo.time_stamp_pc
-                             - (robo.time_stamp_send_micro - robo.time_stamp_receive_micro))
-                        / 2.0;
+            const auto packet_time =
+                Clock::now() - std::chrono::microseconds(serial_send_to_image_microseconds);
+            const bool ok = stream.feed(
+                data.data(),
+                data.size(),
+                TelemetryStream::Clock::now(),
+                [&](const uint8_t* p, size_t n) {
+                    TongjiTelemetry state {};
+                    if (!TongjiTelemetry::decode(
+                            p,
+                            n,
+                            telemetry_gimbal_id,
+                            telemetry_shoot_id,
+                            state
+                        ))
+                    {
+                        return;
+                    }
+                    log_ctx.serial_count++;
+                    // 云台姿态反馈 GIMBAL_ODOM -> GIMBAL：自瞄解算的输入基准，必须持续更新，
+                    // 否则 very_aimer 拿到的云台位姿会退化成单位变换。
+                    ISO3 gimbal_in_gimbal_odom = ISO3::Identity();
+                    gimbal_in_gimbal_odom.linear() = utils::rpy2matrix(
+                        Vec3(
+                            angles::from_degrees(state.roll),
+                            angles::from_degrees(state.pitch),
+                            angles::from_degrees(state.yaw)
+                        ),
+                        utils::RPYOrder::ZYX
+                    );
+                    tf->push(
+                        SentryFrame::GIMBAL_ODOM,
+                        SentryFrame::GIMBAL,
+                        packet_time,
+                        gimbal_in_gimbal_odom
+                    );
+                    // 说明：该版本固件的状态回传里没有 v_x/v_y/v_z、big_yaw_in_world、
+                    // bullet_count 与裁判系统数据，因此：
+                    //   ODOM->GIMBAL_ODOM、GIMBAL_ODOM->BIG_YAW 保持单位变换；
+                    //   enemy_color / bullet_speed 继续由 config/sentry.yaml 决定
+                    //   （固件回传的 color 实为 robot_id 且哨兵恒为 0，bullet_speed 恒为 22.0）；
+                    //   BulletPickUp 的弹道事件与 brain 的裁判数据输入暂时不可用。
                 }
-                auto packet_time =
-                    now - std::chrono::microseconds(serial_send_to_image_microseconds);
-                ISO3 gimbal_in_gimbal_odom = ISO3::Identity();
-                gimbal_in_gimbal_odom.linear() = utils::rpy2matrix(Vec3(
-                    angles::from_degrees(robo.roll),
-                    angles::from_degrees(robo.pitch),
-                    angles::from_degrees(robo.yaw)
-                ));
-                tf->push(
-                    SentryFrame::GIMBAL_ODOM,
-                    SentryFrame::GIMBAL,
-                    packet_time,
-                    gimbal_in_gimbal_odom
-                );
-                auto gimbal_odom_in_odom = ISO3::Identity();
-                gimbal_odom_in_odom.translation() = Vec3(robo.v_x, robo.v_y, robo.v_z);
-                tf->push(
-                    SentryFrame::ODOM,
-                    SentryFrame::GIMBAL_ODOM,
-                    packet_time,
-                    gimbal_odom_in_odom
-                );
-                enemy_color = EnemyColor(robo.detect_color);
-                robo.update_log(delay);
-                if (robo.bullet_count > last_bullet_count) {
-                    bullet_pick_up.push_back(Bullet {
-                        .fire_time = Clock::now(),
-                        .fire_time_shoot_in_odom =
-                            tf->pose_a_in_b(SentryFrame::SHOOT, SentryFrame::ODOM, Clock::now()),
-                        .speed_in_odom = bullet_speed,
-                    });
-                }
-                last_bullet_count = robo.bullet_count;
-            }
-            if (auto joint_opt = SentryJointState::create(data); joint_opt.has_value()) {
-                auto joint = joint_opt.value();
-                auto gimbal_2_gimbal_odom =
-                    tf->pose_a_in_b(SentryFrame::GIMBAL, SentryFrame::GIMBAL_ODOM, Clock::now());
-                auto rpy = utils::matrix2rpy<double>(gimbal_2_gimbal_odom.linear());
-                rpy[2] = angles::from_degrees(joint.big_yaw_in_world);
-                rpy[1] = 0.0;
-                ISO3 big_yaw_2_gimbal_odom = ISO3::Identity();
-                big_yaw_2_gimbal_odom.translation() = Vec3(0, 0, 0.0);
-                big_yaw_2_gimbal_odom.linear() = utils::rpy2matrix(rpy);
-                tf->push(
-                    SentryFrame::GIMBAL_ODOM,
-                    SentryFrame::BIG_YAW,
-                    Clock::now(),
-                    big_yaw_2_gimbal_odom
-                );
-            }
-            auto referee_opt = SentryRefereeReceive::create(data);
-            if (referee_opt && brain) {
-                brain->update_gobal_state(referee_opt.value());
+            );
+            if (!ok) {
+                // 粘包错位或半帧超时：主动复位解析器，避免它永久停留在 failed 状态。
+                AWAKENING_WARN("Serial frame desync; resetting telemetry stream parser");
+                stream.reset();
             }
         });
     }
@@ -672,21 +663,25 @@ int main(int argc, char** argv) {
         } else if (r_target.check()) {
             cmd =
                 rune_aimer.aim(r_target, bullet_speed, shoot_in_gimbal_odom, gimbal_in_gimbal_odom);
+            // 与 standard 一致：打符用 tick_fire 限频，避免每毫秒都请求一次开火。
+            cmd.fire_advice = rune_aimer.tick_fire(r_target, cmd);
         }
 
         if (serial) {
-            SendRobotCmdData send;
-            send.cmd_ID = SendRobotCmdData::ID;
-            send.time_stamp =
-                std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start_tp)
-                    .count();
-            send.appear = cmd.appear, send.detect_color = std::to_underlying(enemy_color.load());
-            send.yaw = cmd.yaw, send.pitch = cmd.pitch, send.v_yaw = cmd.v_yaw;
-            send.target_yaw = cmd.target_yaw, send.target_pitch = cmd.target_pitch;
-            send.v_pitch = cmd.v_pitch, send.a_yaw = cmd.a_yaw, send.a_pitch = cmd.a_pitch;
-            send.enable_yaw_diff = cmd.enable_yaw_diff;
-            send.enable_pitch_diff = cmd.enable_pitch_diff;
-            serial->write(std::move(utils::to_vector(send)));
+            // 下位机（control-2026 / STM32F4 / sentry_omni_gimbal）只接受「长度 + ID」帧：
+            // 每帧 18 字节 = id1{float yaw, float pitch} + id2{int32 fire_flag}。
+            // 角度是绝对角（度、IMU 域），与固件 gimbal_ctrl_cmd 的语义一致；
+            // 没有有效目标时发全 0 空帧，固件据此判定无目标并交回遥控器控制。
+            const bool send_target = cmd.appear && cmd.is_valid();
+            if (send_target) {
+                serial->write(VisionCommand::encode(
+                    static_cast<float>(cmd.yaw),
+                    static_cast<float>(cmd.pitch),
+                    cmd.fire_advice
+                ));
+            } else {
+                serial->write(VisionCommand::encode_idle());
+            }
         }
         auto old_in_camera_cv = tf->pose_a_in_b(
             SentryFrame(cmd.aim_point.frame_id),
@@ -889,15 +884,24 @@ int main(int argc, char** argv) {
         "cmd_vel",
         rclcpp::QoS(10),
         [&](const geometry_msgs::msg::Twist::SharedPtr msg) {
-            SendNavCmdData send;
-
-            send.cmd_ID = SendNavCmdData::ID;
-            send.vx = msg->linear.x;
-            send.vy = msg->linear.y;
-            send.wz = msg->angular.z;
-            send.turtle_state = (msg->linear.z > 0) ? true : false;
+            // 下位机固件（control-2026 / sentry_omni_gimbal）的 InitParam() 只注册了
+            // ID 1（云台）和 ID 2（开火），没有导航消息。SendNavCmdData 属于旧协议
+            // （裸结构体、首字节 0x02），写进同一个串口会让固件的组帧解析错位，
+            // 进而污染云台角与 fire_flag，所以这里不再发送，只做限频提示。
+            // 需要底盘导航时：让电控在固件 InitParam() 里注册对应 ID，
+            // 再按 src/utils/drivers/command_protocol.hpp 的帧格式在这里编码。
             if (serial) {
-                serial->write(utils::to_vector(send));
+                utils::dt_once(
+                    [&]() {
+                        AWAKENING_INFO(
+                            "cmd_vel ignored: no nav message registered in control-2026 (vx={} vy={} wz={})",
+                            msg->linear.x,
+                            msg->linear.y,
+                            msg->angular.z
+                        );
+                    },
+                    std::chrono::duration<double>(1.0)
+                );
             }
         }
     );
