@@ -1,4 +1,12 @@
 #pragma once
+// Legacy protocol types retained for existing callers and indirect sentry_brain
+// dependencies. These are NOT the current sentry wire format.
+//
+// 精确关系：sentry 的**主串口收发路径**已改用 utils/drivers/command_protocol.hpp（发送）
+// 与 utils/drivers/telemetry_protocol.hpp（接收），不再用本文件的类型组帧；
+// 但 sentry_brain 仍在本文件里取用 SentryRefereeSend 等类型
+// （home_mode.hpp / dog_mode.hpp 的 send_current_pose()），因此**编译时不能删除本文件**。
+// 注意：“被引用”不等于“会发出旧协议”——这两个模式类只构造对象，没有调用串口写入。
 
 #include "tasks/base/web.hpp"
 #include "utils/common/type_common.hpp"

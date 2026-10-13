@@ -1,4 +1,11 @@
 #pragma once
+// Legacy protocol types retained for existing callers and indirect sentry_brain
+// dependencies. These are NOT the current sentry wire format.
+//
+// 精确关系：sentry 的接收解析已改到 utils/drivers/telemetry_protocol.hpp；
+// 但 sentry_brain 仍以本文件的类型作为接口与状态入参
+// （mode_base.hpp:115 的 update_gobal_state、gobal_state.hpp:38 的 update），
+// 因此**编译时不能删除本文件**。包含本文件不会让收发重新回到旧协议。
 
 #include "tasks/base/web.hpp"
 #include "utils/common/type_common.hpp"

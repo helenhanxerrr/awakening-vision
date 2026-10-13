@@ -42,13 +42,21 @@ public:
     };
 
 private:
+    // 注意：这里**只构造**旧协议结构体并记录，没有调用 serial_->write()，不会有任何字节发出。
+    // 原因：control-2026 固件的 InitParam() 未注册 ID 3（姿态切换），按新帧格式发它会让对方
+    // 组帧错位（见 src/utils/drivers/command_protocol.hpp 的约束说明）。
+    // 若要真正下发姿态：先让固件注册对应 ID，再按新帧格式编码后发送。
+    // 因此下面这条日志是"决定"，不是"已发送"的证据。
     void send_current_pose() {
         if (!serial_)
             return;
         SentryRefereeSend send;
         send.cmd_ID = SentryRefereeSend::ID;
         send.set_current_pose = std::to_underlying(sentry_pose);
-        AWAKENING_INFO("SEND: {}", GobalState::Pose_to_str(sentry_pose));
+        AWAKENING_INFO(
+            "pose decided: {} (not sent: no pose message registered in control-2026)",
+            GobalState::Pose_to_str(sentry_pose)
+        );
     }
 
     template<typename Key>

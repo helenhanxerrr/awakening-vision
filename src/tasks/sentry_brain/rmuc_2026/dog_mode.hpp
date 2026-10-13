@@ -1,4 +1,8 @@
 #pragma once
+// 本文件此前依赖"先包含 home_mode.hpp（它会带入 mode_base.hpp 与 packet_typedef_send.hpp）"
+// 才能编译；这里补上显式包含，避免单独包含时缺类型定义。
+#include "mode_base.hpp"
+#include "tasks/base/packet_typedef_send.hpp"
 
 namespace awakening::sentry_brain {
 
@@ -30,6 +34,9 @@ public:
         std::string goal_name;
     };
 
+    // 注意：这里**只构造**旧协议结构体，没有调用 serial_->write()，不会有任何字节发出。
+    // 原因：control-2026 固件的 InitParam() 未注册 ID 3（姿态切换），按新帧格式发它会让对方
+    // 组帧错位（见 src/utils/drivers/command_protocol.hpp 的约束说明）。
     void send_current_pose() {
         if (!serial_)
             return;
