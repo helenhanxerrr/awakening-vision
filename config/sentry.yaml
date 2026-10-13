@@ -3,12 +3,18 @@ enemy_color: blue
 bullet_speed: 21.0
 
 serial:
-  # 首轮上位机联调关闭；下位机完成武科串口协议后改为 true。
-  enable: false
+  # 哨兵上下位机联动：接收同济状态回传（ID 1/2），发送 18 字节控制帧，见 src/utils/drivers/command_protocol.hpp。
+  enable: true
   device_name: /dev/ttyACM0 
   baud_rate: 115200
   char_size: 8
   read_buf_size: 4096
+  # 已核对 control-2026 固件的状态回传注册 ID（master_process.c 的 InitParam）。
+  telemetry_gimbal_id: 1
+  telemetry_shoot_id: 2
+  frame_timeout_ms: 1000
+  idle_timeout_ms: 3000
+  reconnect_ms: 500
 serial_send_to_image_microseconds: 2000
 use_sim: false
 
@@ -218,7 +224,8 @@ rune_aimer:
     resistance: 0.001
 
 
-camera: 
+camera:
+  type: hik
   hik_camera:
     target_sn: "00L28498193"
     adc_bit_depth: Bits_8
@@ -231,8 +238,8 @@ camera:
     offset_y: 0
     acquisition_frame_rate_enable: true
     acquisition_frame_rate: 150
-    exposure_time: 1503.0000
-    gain: 16.9089
+    exposure_time: 800
+    gain: 16.9
     gamma: 0.7 #Bayer用不了
     trigger_mode: Off
     trigger_source: ""
@@ -241,24 +248,49 @@ camera:
     use_cuda_cvt: false
   camera_info:
     #8mm
+    # image_width: 1440
+    # image_height: 1080
+    # camera_name: narrow_stereo
+    # camera_matrix:
+    #   rows: 3
+    #   cols: 3
+    #   data: [2419.64498,    0.     ,  719.05623,
+    #             0.     , 2414.38209,  538.71651,
+    #             0.     ,    0.     ,    1.     ]
+    # distortion_model: plumb_bob
+    # distortion_coefficients:
+    #   rows: 1
+    #   cols: 5
+    #   data: [-0.033521, 0.087954, -0.002045, -0.001438, 0.000000]
+    # rectification_matrix:
+    #   rows: 3
+    #   cols: 3
+    #   data: [1., 0., 0.,
+    #          0., 1., 0.,
+    #          0., 0., 1.]
+    # projection_matrix:
+    #   rows: 3
+    #   cols: 4
+    #   data: [2413.22632,    0.     ,  717.5196 ,    0.     ,
+    #             0.     , 2408.83228,  537.43444,    0.     ,
+    #             0.     ,    0.     ,    1.     ,    0.     ]
+    # 当前哨兵主相机：MV-CA016-10UC + 8mm 镜头（旧车标定）
+
     image_width: 1440
     image_height: 1080
-    camera_name: sentry_hikrobot
+    camera_name: narrow_stereo
     camera_matrix:
       rows: 3
       cols: 3
-      data: [2366.6403978435819, 0.0, 691.9177741288019,
-           0.0, 2364.5358236650927, 538.7592864904639,
-           0.0, 0.0, 1.0]
+      data: [2414.9359264386621, 0.0, 717.26243105567414,
+                0.0, 2418.0489262208148, 582.68540529942845,
+                0.     ,    0.     ,    1.     ]
     distortion_model: plumb_bob
     distortion_coefficients:
       rows: 1
       cols: 5
-      data: [-0.10348529362454831,
-            0.18132966630326977,
-           -0.0006158265009364973,
-           -0.001542882127132101,
-            0.0]
+      data: [-0.0209453389287673, 0.15028138841073832,
+             -0.0006517722113234505, -0.0016861906197686788, 0.0]
     rectification_matrix:
       rows: 3
       cols: 3
@@ -268,9 +300,36 @@ camera:
     projection_matrix:
       rows: 3
       cols: 4
-      data: [2366.6403978435819, 0.0, 691.9177741288019, 0.0,
-           0.0, 2364.5358236650927, 538.7592864904639, 0.0,
-           0.0, 0.0, 1.0, 0.0]
+      data: [2414.9359264386621, 0.0, 717.26243105567414, 0.0,
+                0.0, 2418.0489262208148, 582.68540529942845, 0.0,
+                0.     ,    0.     ,    1.     ,    0.     ]
+    #12mm
+    # image_width: 1440
+    # image_height: 1080
+    # camera_name: narrow_stereo
+    # camera_matrix:
+    #   rows: 3
+    #   cols: 3
+    #   data: [3655.11292,    0.     ,  748.66803,
+    #             0.     , 3648.34439,  556.97683,
+    #             0.     ,    0.     ,    1.     ]
+    # distortion_model: plumb_bob
+    # distortion_coefficients:
+    #   rows: 1
+    #   cols: 5
+    #   data: [-0.058763, 1.430269, 0.001191, 0.001641, 0.000000]
+    # rectification_matrix:
+    #   rows: 3
+    #   cols: 3
+    #   data: [1., 0., 0.,
+    #          0., 1., 0.,
+    #          0., 0., 1.]
+    # projection_matrix:
+    #   rows: 3
+    #   cols: 4
+    #   data: [3659.22949,    0.     ,  748.71496,    0.     ,
+    #             0.     , 3652.02661,  556.81908,    0.     ,
+    #             0.     ,    0.     ,    1.     ,    0.     ]
 
 armor_omni:
   # 当前实车只有一路海康主相机。

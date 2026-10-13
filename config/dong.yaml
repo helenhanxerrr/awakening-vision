@@ -8,6 +8,13 @@ serial:
   baud_rate: 115200
   char_size: 8
   read_buf_size: 4096
+  # Read-only telemetry IDs verified in control-2026 commit a6e1638.
+  # InitParam: send.gimbal=1, send.shoot=2; no control TX.
+  telemetry_gimbal_id: 1
+  telemetry_shoot_id: 2
+  frame_timeout_ms: 1000
+  idle_timeout_ms: 3000
+  reconnect_ms: 500
 serial_send_to_image_microseconds: 2000
 use_sim: false
 
