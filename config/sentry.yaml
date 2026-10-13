@@ -1,0 +1,443 @@
+mode: auto_aim
+enemy_color: blue
+bullet_speed: 21.0
+
+serial:
+  # 首轮上位机联调关闭；下位机完成武科串口协议后改为 true。
+  enable: false
+  device_name: /dev/ttyACM0 
+  baud_rate: 115200
+  char_size: 8
+  read_buf_size: 4096
+serial_send_to_image_microseconds: 2000
+use_sim: false
+
+record:
+ enable: false
+
+tf:
+  camera_in_gimbal:
+    t: [0.13089617453251859, 0.0038468007459533785, 0.094139945222010288]
+    # 旧标定的 camera(CV)->gimbal 已扣除框架内置的 R_CV2PHYSICS。
+    R: [0.99981402834802846, -0.01928451708725664, -0.00012696140743255463,
+        0.019284643459122196, 0.99981344688553653, 0.0010834913551969569,
+        0.00010604311483339372, -0.0010857382619952124, 0.99999940496346484]
+  shoot_in_gimbal:
+    # 待机械/CAD确认枪口位置；首轮识别联调先以云台中心代替。
+    t: [0.0,0.0,0.0]
+    R: [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]
+  omin_0_in_big_yaw:
+    t: [0.0,0.2,-0.1]
+    R: [0.0,-1.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0]
+  omin_1_in_big_yaw:
+    t: [-0.1,-0.15,-0.1]
+    R: [-0.74314483,  0.66913061,  0.,
+      -0.66913061, -0.74314483 , 0.  ,
+       0.  ,        0.  ,        1.    ]
+
+
+wheel_odometry:
+  q_xyz: [10.0,10.0,1.0]
+  r_vxyz: [0.05,0.05,0.05]
+
+
+bullet_pick_up:
+  ballistic_trajectory:
+    gravity: 9.8
+    resistance: 0.092
+  
+auto_exposure:
+  enable: false
+  target_brightness: 35.0
+  tolerance: 3.0
+  step_gain: 15.0
+  decay_step: 1.0
+  exposure_min: 200.0
+  exposure_max: 5500.0
+  control_interval_ms: 300
+
+armor_detector:
+  max_infer_num: 5
+  backend: openvino
+  net_detector:
+    openvino:
+      model_path: ${ROOT_DIR}/model/opt-1208-001.onnx
+      device_name: "GPU"
+      infer_request_buffer_num: 10
+    tensorrt:
+      model_path: ${ROOT_DIR}/model/opt-1208-001.onnx
+      copy_context_num: 3
+      min_free_mem_ratio: 0.1
+      use_cuda_preproces: true
+    armor_infer:
+      model_type: tup
+      conf_threshold: 0.2
+  number_classifier:
+    enable: true
+    model_path: ${ROOT_DIR}/model/mlp.onnx
+    label_path: ${ROOT_DIR}/model/label.txt
+  color_classifier:
+    enable: true
+    diff_threshold: 20.0
+  cv:
+    light:
+      bin_threshold: 150.0
+      net_ref_threshold_tol: 50.0
+      min_wh_ratio: 0.05
+      max_wh_ratio: 0.667
+      max_angle: 45.0
+    armor:
+      min_ratio: 1.0
+      max_ratio: 5.0
+
+armor_tracker:
+  lost_time_thres: 0.5
+  lost_time_thres_outpost: 2.0
+  tracking_thres: 10
+  armor_match_gate: 300.0
+  armor_match_gate_not_all_init: 1000.0
+  armor_match_w_center_err: 5.0
+  armor_match_w_angle_err: 10.0
+  armor_match_w_side_length_err: 1.0
+  qxyz_common: [30.0, 30.0, 1.0]
+  qyaw_common: 100.0
+  qxyz_output: [1.0, 1.0, 0.5]
+  qyaw_output: 0.01
+  q_r: 0.0000001
+  q_h: 0.0000001
+  q_wpr: 0.0000001
+  q_outpost_dz: 0.01
+  enable_lights_measure: true
+  light_match_length_ratio_gate: 0.2
+  light_match_angle_gate: 0.2
+  light_match_pos_gate_by_length_ratio: 5.0
+  r_sigma_px_by_length_ratio: 0.2
+  r_sigma_length_by_length_ratio: 0.5
+  r_sigma_angle: 0.5
+  r_sigma_armor_lights_depth_diff: 0.1
+  esekf_iter_num: 5
+
+
+auto_aim_fsm:
+  single_whole_up: 1.5 
+  single_whole_down: 1.0
+  whole_pair_up: 10.5 
+  whole_pair_down: 9.5 #1s内至少换2次板子  2pi  否则轨迹规划无意义
+  pair_center_up: 16.5
+  pair_center_down: 15.0
+  transfer_time: 0.5
+
+very_aimer:
+  type: mpc
+  base_yaw_offset: -0.8
+  base_pitch_offset: 4.0
+  # base_yaw_offset: -0.0
+  # base_pitch_offset: -0.0
+  sample_total_time: 1.0
+  
+  sample_horizon: 200
+
+  fire_delay_min: 0.01
+  fire_delay_max: 0.05
+  
+  max_yaw_acc: 40
+  max_pitch_acc: 50
+  
+
+  prediction_delay: 0.00
+  aim_center_more_prediction_time: 0.0
+
+  shooting_range_h: 0.12
+  shooting_range_w_small: 0.12
+  shooting_range_w_large: 0.24
+  min_enable_pitch_deg: 0.25
+  min_enable_yaw_deg: 0.25
+  ballistic_trajectory:
+    gravity: 9.8
+    resistance: 0.001
+
+rune_detector:
+  max_infer_num: 5
+  backend: openvino
+  net_detector:
+    openvino:
+      model_path: ${ROOT_DIR}/model/cb_rune.onnx
+      device_name: "GPU"
+      infer_request_buffer_num: 10
+    tensorrt:
+      model_path: ${ROOT_DIR}/model/cb_rune.onnx
+      copy_context_num: 3
+      min_free_mem_ratio: 0.1
+      use_cuda_preproces: true
+    rune_infer:
+      model_type: cb
+      conf_threshold: 0.2
+  cv:
+    bin_threshold: 70
+    color_diff_thresh: 10
+    rune_r_min_area: 1
+    rune_r_max_area: 999999999
+    rune_r_1x1ratio_tol: 0.7
+    rune_r_fill_ratio_min: 0.1
+    rune_pan_min_area: 10
+    rune_pan_max_area: 99999999
+    rune_pan_cluster_radius: 70
+    rune_pan_max_square_ratio: 1.3
+
+rune_tracker:
+  lost_time_thres: 2.0
+  tracking_thres: 10
+  esekf_iter_num: 5
+  q_xyz: [0.0001, 0.0001, 0.0001]
+  q_yaw: 0.1
+  q_roll: 10.0
+  q_a: 0.00001
+  q_w: 0.00001
+  q_tau: 0.000001
+  match_gate: 50.0
+  voter_state_need_count: 50
+  voter_mode_need_count: 20
+  big_args_continue_time: 1.0
+  r_sigma_pix_by_hand_length_ratio_cv: 0.05
+  r_sigma_pix_by_hand_length_ratio_net: 0.2
+
+rune_aimer:
+  base_yaw_offset: -0.0
+  base_pitch_offset: -0.5
+  sample_total_time: 0.5
+  sample_horizon: 10
+  prediction_delay: -0.00
+  max_yaw_acc: 40 
+  max_pitch_acc: 50
+  shooting_range_h: 0.12
+  shooting_range_w: 0.12
+  min_enable_pitch_deg: 0.25
+  min_enable_yaw_deg: 0.25
+  ballistic_trajectory:
+    gravity: 9.8
+    resistance: 0.001
+
+
+camera: 
+  hik_camera:
+    target_sn: "00L28498193"
+    adc_bit_depth: Bits_8
+    pixel_format: BayerRG8 #RGB8Packed
+    reverse_x: false
+    reverse_y: false
+    width: 1440
+    height: 1080
+    offset_x: 0
+    offset_y: 0
+    acquisition_frame_rate_enable: true
+    acquisition_frame_rate: 150
+    exposure_time: 1503.0000
+    gain: 16.9089
+    gamma: 0.7 #Bayer用不了
+    trigger_mode: Off
+    trigger_source: ""
+    trigger_activation: ""
+    format: "bgr" 
+    use_cuda_cvt: false
+  camera_info:
+    #8mm
+    image_width: 1440
+    image_height: 1080
+    camera_name: sentry_hikrobot
+    camera_matrix:
+      rows: 3
+      cols: 3
+      data: [2366.6403978435819, 0.0, 691.9177741288019,
+           0.0, 2364.5358236650927, 538.7592864904639,
+           0.0, 0.0, 1.0]
+    distortion_model: plumb_bob
+    distortion_coefficients:
+      rows: 1
+      cols: 5
+      data: [-0.10348529362454831,
+            0.18132966630326977,
+           -0.0006158265009364973,
+           -0.001542882127132101,
+            0.0]
+    rectification_matrix:
+      rows: 3
+      cols: 3
+      data: [1., 0., 0.,
+            0., 1., 0.,
+            0., 0., 1.]
+    projection_matrix:
+      rows: 3
+      cols: 4
+      data: [2366.6403978435819, 0.0, 691.9177741288019, 0.0,
+           0.0, 2364.5358236650927, 538.7592864904639, 0.0,
+           0.0, 0.0, 1.0, 0.0]
+
+armor_omni:
+  # 当前实车只有一路海康主相机。
+  enable: false
+  fps: 60.0
+  max_infer_num: 3
+  armor_detector:
+    armor_infer:
+      model_type: tup
+      conf_threshold: 0.5
+    net_detector:
+      backend: openvino
+      openvino:
+        model_path: ${ROOT_DIR}/model/opt-1208-001.onnx
+        device_name: "GPU"
+        perf_mode: "THROUGHPUT"
+        priority: "HIGH"
+        # scheduling_core_type: "PCORE_ONLY"
+        execution_mode: "PERFORMANCE"
+        infer_request_buffer_num: 10
+      tensorrt:
+        model_path: ${ROOT_DIR}/model/opt-1208-001.onnx
+        copy_context_num: 3
+        min_free_mem_ratio: 0.1
+        use_cuda_preproces: true
+    number_classifier:
+      enable: true
+      model_path: ${ROOT_DIR}/model/mlp.onnx
+      label_path: ${ROOT_DIR}/model/label.txt
+    color_classifier:
+      enable: true
+      diff_threshold: 20.0
+  armor_tracker:
+    lost_time_thres: 0.5
+    tracking_thres: 2
+    match_gate_at_1m: 1000.0
+    match_gate_not_all_init_at_1m: 10000.0
+    qxyz_common: [20.0, 20.0, 1.0]
+    qyaw_common: 10.0
+    qxyz_output: [10.0, 10.0, 0.5]
+    qyaw_output: 0.01
+    q_r: 0.0000001
+    q_l: 0.0000001
+    q_h: 0.0000001
+    q_outpost_dz: 0.5
+    r_uv_at_1m: 100.0
+    r_uv_min: 30.0
+    esekf_iter_num: 1
+  camera0:
+    uvc_camera:
+      device_name: "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.4:1.0-video-index0"
+      fps: 30
+      width: 1280
+      height: 720
+      exposure: 50
+      gain: 10.0
+      gamma: 100
+    camera_info:
+      image_width: 1440
+      image_height: 1080
+      camera_name: narrow_stereo
+      camera_matrix:
+        rows: 3
+        cols: 3
+        data: [759.73071, 0.0, 336.19053, 0.0, 761.16771, 231.83002, 0.0, 0.0, 1.0     ]
+      distortion_model: plumb_bob
+      distortion_coefficients:
+        rows: 1
+        cols: 5
+        data: [0.000281, 0.144018, 0.005509, -0.004330, 0.0]
+      rectification_matrix:
+        rows: 3
+        cols: 3
+        data: [1., 0., 0.,
+              0., 1., 0.,
+              0., 0., 1.]
+      projection_matrix:
+        rows: 3
+        cols: 4
+        data: [1793.54229,    0.     ,  730.67194,    0.     ,
+                  0.     , 1794.48784,  529.46193,    0.     ,
+                  0.     ,    0.     ,    1.     ,    0.     ]
+  camera1:
+    uvc_camera:
+      device_name: "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.1:1.0-video-index0"
+      fps: 30
+      width: 1280
+      height: 720
+      exposure: 50
+      gain: 10.0
+      gamma: 100
+    camera_info:
+      image_width: 1440
+      image_height: 1080
+      camera_name: narrow_stereo
+      camera_matrix:
+        rows: 3
+        cols: 3
+        data: [759.73071, 0.0, 336.19053, 0.0, 761.16771, 231.83002, 0.0, 0.0, 1.0     ]
+      distortion_model: plumb_bob
+      distortion_coefficients:
+        rows: 1
+        cols: 5
+        data: [0.000281, 0.144018, 0.005509, -0.004330, 0.0]
+      rectification_matrix:
+        rows: 3
+        cols: 3
+        data: [1., 0., 0.,
+              0., 1., 0.,
+              0., 0., 1.]
+      projection_matrix:
+        rows: 3
+        cols: 4
+        data: [1793.54229,    0.     ,  730.67194,    0.     ,
+                  0.     , 1794.48784,  529.46193,    0.     ,
+                  0.     ,    0.     ,    1.     ,    0.     ]
+uvc_camera_test:
+  uvc_camera:
+      device_name: "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:7.1:1.0-video-index0"
+      fps: 30
+      width: 1280
+      height: 720
+      exposure: 50
+      gain: 10.0
+      gamma: 100
+  camera_info:
+      image_width: 1440
+      image_height: 1080
+      camera_name: narrow_stereo
+      camera_matrix:
+        rows: 3
+        cols: 3
+        data: [759.73071, 0.0, 336.19053, 0.0, 761.16771, 231.83002, 0.0, 0.0, 1.0     ]
+      distortion_model: plumb_bob
+      distortion_coefficients:
+        rows: 1
+        cols: 5
+        data: [0.000281, 0.144018, 0.005509, -0.004330, 0.0]
+      rectification_matrix:
+        rows: 3
+        cols: 3
+        data: [1., 0., 0.,
+              0., 1., 0.,
+              0., 0., 1.]
+      projection_matrix:
+        rows: 3
+        cols: 4
+        data: [1793.54229,    0.     ,  730.67194,    0.     ,
+                  0.     , 1794.48784,  529.46193,    0.     ,
+                  0.     ,    0.     ,    1.     ,    0.     ]
+
+
+
+brain:
+  # 首轮只联调主相机自瞄；导航、裁判系统和下位机就绪后再开启。
+  enable: false
+  mode: home
+  
+  home: 
+    go_home_hp_ratio: 0.4
+    home_bullet_num: 10
+    start_in_referee_map: 
+      t: [3.3, 8, -1.6]
+      R: [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]
+  dog:
+    go_home_hp_ratio: 0.4
+    home_bullet_num: 10
+    start_in_referee_map: 
+      t: [3.3, 8, -1.6]
+      R: [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]
