@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
             // 下位机约 1kHz 连续发送 30 字节定长帧（int16 长度 + [int16 ID][payload]）：
             //   ID 1 -> {float yaw, float pitch, float roll, int32 mode, int32 robot_id}（角度单位「度」）
             //   ID 2 -> {float bullet_speed}
-            static TelemetryStream stream(std::chrono::milliseconds(telemetry_frame_timeout_ms));
+            static TelemetryStream stream{std::chrono::milliseconds(telemetry_frame_timeout_ms)};
             std::lock_guard<std::mutex> lock(mutex);
 
             const auto packet_time =
