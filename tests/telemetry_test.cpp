@@ -116,15 +116,23 @@ void driver_tests() {
     assert(tx_len==(ssize_t)cmd.size());assert(std::memcmp(tx,cmd.data(),cmd.size())==0);
     auto wire=frame();assert(::write(p.master,wire.data(),wire.size())==30);
     wait_for([&]{return d.statistics().frames==1;});assert(d.statistics().invalid==0);
-    // 接收：驱动必须把原始字节投递给业务侧（runtime_push_source）
-    assert(scheduler.pushed>=1&&scheduler.pushed_bytes>=30);
+    // 只投递完整有效帧；业务层不应接收非法帧或跨连接半包。
+    wait_for([&]{return scheduler.pushed_bytes==30;});
+    assert(scheduler.pushed==1);
     auto bad=wire;bad[17]=1;assert(::write(p.master,bad.data(),bad.size())==30);
     wait_for([&]{return d.statistics().invalid==1;});
     assert(::write(p.master,wire.data(),3)==3);
     wait_for([&]{return d.statistics().timeouts>=1 && d.statistics().connections>=2;});
+    assert(scheduler.pushed==1 && scheduler.pushed_bytes==30);
     assert(::write(p.master,wire.data(),wire.size())==30);wait_for([&]{return d.statistics().frames==3;});
+    wait_for([&]{return scheduler.pushed_bytes==60;});
+    assert(scheduler.pushed==2);
     const uint8_t corrupt[2]={255,255};assert(::write(p.master,corrupt,2)==2);
     wait_for([&]{return d.statistics().framing_errors>=1 && d.statistics().connections>=3;});
+    assert(scheduler.pushed==2 && scheduler.pushed_bytes==60);
+    assert(::write(p.master,wire.data(),wire.size())==30);
+    wait_for([&]{return scheduler.pushed_bytes==90;});
+    assert(scheduler.pushed==3);
     auto start=std::chrono::steady_clock::now();d.stop();assert(std::chrono::steady_clock::now()-start<500ms);
     d.stop();d.start<Tag>("restart");wait_for([&]{return d.statistics().connections>=4;});
     std::thread a([&]{d.stop();});std::thread b([&]{d.stop();});a.join();b.join();
@@ -136,6 +144,14 @@ void driver_tests() {
     wait_for([&]{return r.statistics().connections==1;});close(unplug.master);unplug.master=-1;
     std::this_thread::sleep_for(100ms);start=std::chrono::steady_clock::now();r.stop();
     assert(std::chrono::steady_clock::now()-start<500ms);
+    // 未配置同济 ID 的旧协议串口仍须透传任意字节。
+    Pty raw; Scheduler raw_scheduler; auto raw_config=config(raw.slave);
+    raw_config["telemetry_gimbal_id"]=-1;raw_config["telemetry_shoot_id"]=-1;
+    SerialDriver raw_driver(raw_config,raw_scheduler);raw_driver.start<Tag>("raw");
+    wait_for([&]{return raw_driver.statistics().connections==1;});
+    const uint8_t arbitrary[]={0xff,0x00,0x11};
+    assert(::write(raw.master,arbitrary,sizeof(arbitrary))==3);
+    wait_for([&]{return raw_scheduler.pushed_bytes==3;});raw_driver.stop();
     std::cout<<"PASS: PTY command TX + telemetry RX/publish, reject, timeout/framing reconnect, start/restart/concurrent stop, invalid config, idle timeout, unplug\n";
 }
 int main(){protocol_tests();command_tests();driver_tests();}

@@ -68,7 +68,7 @@ public:
         std::lock_guard<std::mutex> lock(lifecycle_);
         if (thread_.joinable()) return;
         source_snapshot_id_ = scheduler_.register_source<IO>(source_name);
-        // 类型擦除的投递通道：读取线程拿到原始字节后交给调度器，业务侧 receive_serial 才能真正收到数据。
+        // 类型擦除的投递通道：同济有效完整帧或其它协议原始字节交给业务侧 receive_serial。
         publish_ = [this](std::vector<uint8_t> bytes) {
             // 只在 Scheduler::run() 之后投递，避免与 main 线程的 build() 发生竞争。
             if (bytes.empty() || !scheduler_.is_running()) return;
@@ -94,6 +94,7 @@ public:
     }
     // 上位机 -> 下位机。data 必须是一帧完整报文（见 utils/drivers/command_protocol.hpp）：
     // 固件每次 USB 回调只消费首部声明的字节数，多余的会被丢弃，因此不能把多帧拼在一次调用里。
+    // 注意：独立 write 不能保证 USB 回调边界，固件仍需按实际接收长度处理拆包/粘包。
     bool write(const std::vector<uint8_t>& data) {
         if (!connected_.load(std::memory_order_acquire)) return false;
         const uint64_t gen = generation_.load(std::memory_order_acquire);
@@ -196,9 +197,9 @@ private:
                 const auto now = TelemetryStream::Clock::now();
                 if (size) {
                     last_rx_ = now;
-                    // 原始字节投递给业务侧（receive_serial）自行组帧解析；
-                    // 驱动内部仍保留一份解析，仅用于统计与日志。
-                    if (publish_) {
+                    // 非同济协议保持原始字节透传；同济状态在 observe 中按完整有效帧投递。
+                    // 不把半包交给业务层，避免重连后业务解析器残留上一连接的数据。
+                    if (!telemetry_enabled() && publish_) {
                         publish_(std::vector<uint8_t>(read_buf_.data(), read_buf_.data() + size));
                     }
                 }
@@ -219,6 +220,14 @@ private:
         const bool valid = TongjiTelemetry::decode(p, n, active_.telemetry_gimbal_id,
                                                    active_.telemetry_shoot_id, state);
         if (!valid) ++invalid_;
+        if (valid && publish_) {
+            std::vector<uint8_t> frame;
+            frame.reserve(n + 2);
+            frame.push_back(static_cast<uint8_t>(n & 0xff));
+            frame.push_back(static_cast<uint8_t>((n >> 8) & 0xff));
+            frame.insert(frame.end(), p, p + n);
+            publish_(std::move(frame));
+        }
         if (now - last_log_ < std::chrono::seconds(1)) return;
         last_log_ = now;
         if (valid)

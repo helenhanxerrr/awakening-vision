@@ -20,6 +20,7 @@ namespace isolated_test { template<class... T> void log(const T&...) {} }
 ''')
     (temp / "utils/scheduler/scheduler.hpp").write_text('''#pragma once
 #include <cstddef>
+#include <atomic>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -39,8 +40,8 @@ public:
             pushed_bytes += payload->size();
         }
     }
-    int pushed = 0;
-    std::size_t pushed_bytes = 0;
+    std::atomic<int> pushed{0};
+    std::atomic<std::size_t> pushed_bytes{0};
 private:
     std::size_t count_ = 0;
 };
