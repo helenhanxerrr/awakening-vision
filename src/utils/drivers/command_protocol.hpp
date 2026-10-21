@@ -10,6 +10,7 @@ namespace awakening {
 //   int16 total_len(=各记录 2+载荷 之和) | (int16 id, payload)*
 //   id 1 -> {float yaw; float pitch;}   id 2 -> {int32 fire_flag;}
 // 全小端，无 CRC，无握手。必须「一次 write 恰好一帧 18 字节」。
+// 这只是发送接口约束，不能保证 USB 回调边界；固件仍需按实际接收长度处理拆包/粘包。
 class VisionCommand {
 public:
     static constexpr int16_t kGimbalId = 1;
