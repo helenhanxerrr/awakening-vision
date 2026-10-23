@@ -1,0 +1,15 @@
+# 同济对称圆点板：列/行是圆心数量，距离为相邻圆心距离。
+pattern_cols: 10
+pattern_rows: 7
+center_distance_mm: 40.0
+min_views: 10
+max_reprojection_rms_px: 2.0
+max_handeye_rotation_rms_deg: 3.0
+max_handeye_translation_rms_m: 0.02
+# capture 输出的四元数已是武科 gimbal->world，必须使用单位阵。
+# 导入同济 IMU 原始四元数时才填写实际 gimbal->imubody 旋转。
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+# 仅在云台停稳后按 s；姿态协议没有设备时间戳，因此不支持运动中精确同步。
+pose_max_age_ms: 100
+pose_stable_window_ms: 300
+pose_stable_angle_deg: 0.3

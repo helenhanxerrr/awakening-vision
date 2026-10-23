@@ -212,6 +212,7 @@ endif()
 
 awakening_add_executable(standard SOURCES src/runtime/standard.cpp LINKS ${STANDARD_LINKS})
 awakening_add_executable(control_test TOOL SOURCES src/runtime/test/control_test.cpp LINKS ${PROJECT_NAME}_web)
+awakening_add_executable(calibration_capture TOOL SOURCES calibration/capture.cpp)
 awakening_add_executable(delay_test TOOL SOURCES src/runtime/test/delay_test.cpp)
 awakening_add_executable(vo SOURCES src/runtime/vo.cpp LINKS ${VO_LINKS})
 
