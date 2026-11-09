@@ -20,8 +20,8 @@ struct VeryAimer::Impl {
         int sample_horizon;
         double fire_delay_min;
         double fire_delay_max;
-        double max_yaw_acc;
-        double max_pitch_acc;
+        double max_yaw_acc; // rad/s², passed directly to the trajectory planner
+        double max_pitch_acc; // rad/s²
         double prediction_delay;
         double aim_center_more_prediction_time;
         double shooting_range_h;
@@ -50,6 +50,13 @@ struct VeryAimer::Impl {
     using MPCType = dta_utils::TinyMpcTrajectory;
     Impl(const YAML::Node& config) {
         params_.load(config);
+        AWAKENING_INFO(
+            "very_aimer acceleration limits: yaw={} rad/s^2 ({} deg/s^2), pitch={} rad/s^2 ({} deg/s^2)",
+            params_.max_yaw_acc,
+            angles::to_degrees(params_.max_yaw_acc),
+            params_.max_pitch_acc,
+            angles::to_degrees(params_.max_pitch_acc)
+        );
         ballistic_trajectory_ = BallisticTrajectory::create(config["ballistic_trajectory"]);
         base_yaw_offset_rad_ = angles::from_degrees(config["base_yaw_offset"].as<double>());
         base_pitch_offset_rad_ = angles::from_degrees(config["base_pitch_offset"].as<double>());
@@ -581,6 +588,8 @@ struct VeryAimer::Impl {
         double target_pitch =
             angles::normalize_angle(target_gimbal_state.pitch_state.p + target_traj_cp0.pitch);
         cmd.timestamp = Clock::now();
+        // Planner states use rad, rad/s, rad/s². Command/debug fields use
+        // deg, deg/s, deg/s²; the sentry wire frame sends only the angles.
         cmd.yaw = angles::to_degrees(control_yaw);
         cmd.v_yaw = angles::to_degrees(control.yaw_state.v);
         cmd.a_yaw = angles::to_degrees(control.yaw_state.a);

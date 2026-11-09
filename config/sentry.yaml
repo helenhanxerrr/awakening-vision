@@ -146,6 +146,8 @@ very_aimer:
   fire_delay_min: 0.01
   fire_delay_max: 0.05
   
+  # 规划器加速度限制：rad/s²；不是串口角度或网页曲线使用的度制。
+  # yaw 5 ≈ 286.48 °/s²；pitch 3 ≈ 171.89 °/s²。
   max_yaw_acc: 5
   max_pitch_acc: 3
   
