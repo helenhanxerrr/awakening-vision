@@ -79,7 +79,7 @@ do_build() {
     cmake -S "$WORK_DIR" -B "$BUILD_DIR" \
         -G Ninja \
         -DCMAKE_C_COMPILER=clang \
-        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_CXX_COMPILER=${AWAKENING_CXX:-g++-13}
     if [ $? -ne 0 ]; then
         echo -e "${red}--- CMake Failed ---${reset}"
         exit 1
