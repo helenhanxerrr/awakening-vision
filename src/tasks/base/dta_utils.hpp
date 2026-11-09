@@ -110,9 +110,9 @@ struct ControlPoint {
 };
 struct GimbalState {
     struct State {
-        double p;
-        double v;
-        double a;
+        double p; // rad
+        double v; // rad/s
+        double a; // rad/s²
         bool on_traj;
         static State lerp(const State& s0, const State& s1, double a) noexcept {
             State r { .p = utils::lerp_angle(s0.p, s1.p, a),
