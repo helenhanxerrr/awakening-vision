@@ -48,13 +48,13 @@
 #include "tasks/auto_aim/auto_aim_fsm.hpp"
 #include "tasks/auto_aim/type.hpp"
 #include "tasks/base/common.hpp"
-#include "tasks/base/packet_typedef_receive.hpp"
-#include "tasks/base/packet_typedef_send.hpp"
 #include "tasks/base/web.hpp"
 #include "utils/buffer.hpp"
 #include "utils/common/image.hpp"
 #include "utils/common/type_common.hpp"
+#include "utils/drivers/command_protocol.hpp"
 #include "utils/drivers/serial_driver.hpp"
+#include "utils/drivers/telemetry_protocol.hpp"
 #include "utils/logger.hpp"
 #include "utils/runtime_tf.hpp"
 #include "utils/scheduler/scheduler.hpp"
@@ -151,7 +151,6 @@ static constexpr auto RECORD_FOLDER_PATH_ARR = utils::concat(ROOT_DIR, "/record/
 static constexpr std::string_view RECORD_FOLDER_PATH(RECORD_FOLDER_PATH_ARR.data());
 
 int main(int argc, char** argv) {
-    auto start_tp = Clock::now();
     print_banner();
     auto& signal = utils::SignalGuard::instance();
     logger::init(spdlog::level::trace);
@@ -271,6 +270,23 @@ int main(int argc, char** argv) {
         );
     }
     auto serial_send_to_image_microseconds = config["serial_send_to_image_microseconds"].as<int>();
+    // 同济状态回传的消息 ID，必须与下位机 InitParam() 的注册一致（见 config/dong.yaml）。
+    const int telemetry_gimbal_id = config["serial"]["telemetry_gimbal_id"].as<int>(-1);
+    const int telemetry_shoot_id = config["serial"]["telemetry_shoot_id"].as<int>(-1);
+    const int telemetry_frame_timeout_ms = config["serial"]["frame_timeout_ms"].as<int>(1000);
+    // 视觉 pitch（抬头为正）到固件 IMU Pitch 的符号，只在发送边界使用。
+    // 哨兵（IMU 安装 .Pitch = 0）实机验证为 -1；IMU 倒装的车（如六轮步兵 .Pitch = 180）需要 +1。
+    // 首次上车先小角度点动：云台往反方向走就说明这一项要取反（改 config/dong.yaml，无需重编译）。
+    const double pitch_sign = config["serial"]["pitch_sign"].as<double>(-1.0);
+    if (serial) {
+        AWAKENING_INFO("serial pitch_sign = {} (按实车云台方向在 config/dong.yaml 调整)", pitch_sign);
+        if (telemetry_gimbal_id <= 0 || telemetry_shoot_id <= 0) {
+            AWAKENING_WARN(
+                "serial.telemetry_gimbal_id/shoot_id 未配置：不再解析旧协议回传，"
+                "本车拿不到云台姿态（仅发送控制帧）"
+            );
+        }
+    }
 #ifdef USE_Daedalus
     if (daedalus_shm_client) {
         auto daedalus_imgs = s.register_source<CameraIO>("daedalus_img");
@@ -359,62 +375,64 @@ int main(int argc, char** argv) {
 
     if (serial) {
         s.register_task<SerialIO>("receive_serial", [&](SerialIO::second_type&& data) {
+            // 未配置回传 ID 的配置（omni/leg/uav/wit/eg 目前就是）不做同济组帧：
+            // 旧协议已不再解析，这里直接丢弃输入，只保留发送侧，避免每包刷一次告警。
+            if (telemetry_gimbal_id <= 0 || telemetry_shoot_id <= 0) return;
             static std::mutex mutex;
+            // 下位机约 1kHz 连续发送 30 字节定长帧（int16 长度 + [int16 ID][payload]）：
+            //   ID 1 -> {float yaw, float pitch, float roll, int32 mode, int32 robot_id}（角度单位「度」）
+            //   ID 2 -> {float bullet_speed}
+            // 驱动只投递完整有效帧，这里保留一层组帧解析以便与 sentry 写法一致。
+            static TelemetryStream stream{std::chrono::milliseconds(telemetry_frame_timeout_ms)};
             std::lock_guard<std::mutex> lock(mutex);
-            auto now = Clock::now();
 
-            log_ctx.serial_count++;
-            if (auto robo_opt = ReceiveRobotData::create(data); robo_opt.has_value()) {
-                auto robo = robo_opt.value();
-                static uint32_t last_pc = -1, delay = 0, last_bullet_count = 0;
-                if (robo.time_stamp_pc != last_pc) {
-                    last_pc = robo.time_stamp_pc;
-                    delay = (std::chrono::duration_cast<std::chrono::microseconds>(now - start_tp)
-                                 .count()
-                             - robo.time_stamp_pc
-                             - (robo.time_stamp_send_micro - robo.time_stamp_receive_micro))
-                        / 2.0;
+            const auto packet_time =
+                Clock::now() - std::chrono::microseconds(serial_send_to_image_microseconds);
+            const bool ok = stream.feed(
+                data.data(),
+                data.size(),
+                TelemetryStream::Clock::now(),
+                [&](const uint8_t* p, size_t n) {
+                    TongjiTelemetry state {};
+                    if (!TongjiTelemetry::decode(
+                            p,
+                            n,
+                            telemetry_gimbal_id,
+                            telemetry_shoot_id,
+                            state
+                        ))
+                    {
+                        return;
+                    }
+                    log_ctx.serial_count++;
+                    // 云台姿态反馈 GIMBAL_ODOM -> GIMBAL：自瞄解算的输入基准，必须持续更新，
+                    // 否则 very_aimer 拿到的云台位姿会退化成单位变换。
+                    ISO3 gimbal_in_gimbal_odom = ISO3::Identity();
+                    gimbal_in_gimbal_odom.linear() = utils::rpy2matrix(
+                        Vec3(
+                            angles::from_degrees(state.roll),
+                            angles::from_degrees(state.pitch),
+                            angles::from_degrees(state.yaw)
+                        ),
+                        utils::RPYOrder::ZYX
+                    );
+                    tf->push(
+                        SimpleFrame::GIMBAL_ODOM,
+                        SimpleFrame::GIMBAL,
+                        packet_time,
+                        gimbal_in_gimbal_odom
+                    );
+                    // 说明：该版本固件的状态回传里没有 operator_*_offset、v_x/v_y/v_z、
+                    // bullet_count，也没有旧业务包里的三个时间戳，因此：
+                    //   operator_offset 保持 {0,0}（需要补偿时在 config 或网页侧调整）；
+                    //   enemy_color / bullet_speed 继续由 config/dong.yaml 决定，不被回传值覆盖；
+                    //   BulletPickUp 的弹道事件暂不可用（缺少已发弹计数）。
                 }
-
-                auto packet_time =
-                    now - std::chrono::microseconds(serial_send_to_image_microseconds);
-                ISO3 gimbal_in_gimbal_odom = ISO3::Identity();
-                gimbal_in_gimbal_odom.linear() = utils::rpy2matrix(
-                    Vec3(
-                        angles::from_degrees(robo.roll),
-                        angles::from_degrees(robo.pitch),
-                        angles::from_degrees(robo.yaw)
-                    ),
-                    utils::RPYOrder::ZYX
-                );
-                tf->push(
-                    SimpleFrame::GIMBAL_ODOM,
-                    SimpleFrame::GIMBAL,
-                    packet_time,
-                    gimbal_in_gimbal_odom
-                );
-                operator_offset = { angles::from_degrees(robo.operator_yaw_offset),
-                                    angles::from_degrees(robo.operator_pitch_offset) };
-                auto gimbal_odom_in_odom = ISO3::Identity();
-                gimbal_odom_in_odom.translation() = Vec3(robo.v_x, robo.v_y, robo.v_z);
-                // tf->push(
-                //     SimpleFrame::ODOM,
-                //     SimpleFrame::GIMBAL_ODOM,
-                //     packet_time,
-                //     gimbal_odom_in_odom
-                // );
-                enemy_color = EnemyColor(robo.detect_color);
-                bullet_speed = robo.bullet_speed;
-                robo.update_log(delay);
-                if (robo.bullet_count > last_bullet_count) {
-                    bullet_pick_up.push_back(Bullet {
-                        .fire_time = Clock::now(),
-                        .fire_time_shoot_in_odom =
-                            tf->pose_a_in_b(SimpleFrame::SHOOT, SimpleFrame::ODOM, Clock::now()),
-                        .speed_in_odom = bullet_speed,
-                    });
-                }
-                last_bullet_count = robo.bullet_count;
+            );
+            if (!ok) {
+                // 粘包错位或半帧超时：主动复位解析器，避免它永久停留在 failed 状态。
+                AWAKENING_WARN("Serial frame desync; resetting telemetry stream parser");
+                stream.reset();
             }
         });
     }
@@ -683,7 +701,6 @@ int main(int argc, char** argv) {
             tf->pose_a_in_b(SimpleFrame::SHOOT, SimpleFrame::GIMBAL_ODOM, Clock::now());
         auto gimbal_in_gimbal_odom =
             tf->pose_a_in_b(SimpleFrame::GIMBAL, SimpleFrame::GIMBAL_ODOM, Clock::now());
-        static ShootControlSend shoot_send;
         if (a_target.check()) {
             very_aimer.set_operator_offset(operator_offset);
             cmd = very_aimer.very_aim(
@@ -698,33 +715,25 @@ int main(int argc, char** argv) {
             rune_aimer.set_operator_offset(operator_offset);
             cmd =
                 rune_aimer.aim(r_target, bullet_speed, shoot_in_gimbal_odom, gimbal_in_gimbal_odom);
-            bool can_fire = rune_aimer.tick_fire(r_target, cmd);
-            if (can_fire) {
-                AWAKENING_INFO("you can fire!");
-                cmd.fire_advice = true;
-                shoot_send.shoot_count++;
-            } else {
-                cmd.fire_advice = false;
-            }
+            // 与 sentry 一致：打符用 tick_fire 限频，避免每毫秒都请求一次开火。
+            cmd.fire_advice = rune_aimer.tick_fire(r_target, cmd);
         }
 
         if (serial) {
-            SendRobotCmdData send;
-            send.cmd_ID = SendRobotCmdData::ID;
-            send.time_stamp =
-                std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start_tp)
-                    .count();
-            send.appear = cmd.appear, send.detect_color = std::to_underlying(enemy_color.load());
-            send.yaw = cmd.yaw, send.pitch = cmd.pitch, send.v_yaw = cmd.v_yaw;
-            send.target_yaw = cmd.target_yaw, send.target_pitch = cmd.target_pitch;
-            send.v_pitch = cmd.v_pitch, send.a_yaw = cmd.a_yaw, send.a_pitch = cmd.a_pitch;
-            send.enable_yaw_diff = cmd.enable_yaw_diff;
-            send.enable_pitch_diff = cmd.enable_pitch_diff;
-            if (utils::is_finite(send)) {
-                serial->write(std::move(utils::to_vector(send)));
-            }
-            if (utils::is_finite(shoot_send)) {
-                serial->write(std::move(utils::to_vector(shoot_send)));
+            // 下位机（control-2026）只接受「长度 + ID」帧：
+            // 每帧 18 字节 = id1{float yaw, float pitch} + id2{int32 fire_flag}。
+            // 角度是绝对角（度）：yaw 同向；视觉 pitch 抬头为正，固件 IMU Pitch 抬头为负，
+            // 因此只在发送边界乘 pitch_sign（见 config/dong.yaml，哨兵实机验证为 -1）。
+            // 没有有效目标时发全 0 空帧，固件据此判定无目标并交回遥控器控制。
+            const bool send_target = cmd.appear && cmd.is_valid();
+            if (send_target) {
+                serial->write(VisionCommand::encode(
+                    static_cast<float>(cmd.yaw),
+                    static_cast<float>(pitch_sign * cmd.pitch),
+                    cmd.fire_advice
+                ));
+            } else {
+                serial->write(VisionCommand::encode_idle());
             }
         }
 #ifdef USE_Daedalus

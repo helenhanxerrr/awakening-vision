@@ -8,13 +8,18 @@ serial:
   baud_rate: 115200
   char_size: 8
   read_buf_size: 4096
-  # Read-only telemetry IDs verified in control-2026 commit a6e1638.
-  # InitParam: send.gimbal=1, send.shoot=2; no control TX.
+  # 同济协议：回传 ID 1 = 云台姿态（yaw/pitch/roll 度）、2 = 弹速；
+  # 发送为 18 字节控制帧（id1 云台角 + id2 开火标志），见 src/utils/drivers/command_protocol.hpp。
+  # ID 已对齐 control-2026 的 master_process.c InitParam 注册（gimbal=1, shoot=2）。
   telemetry_gimbal_id: 1
   telemetry_shoot_id: 2
   frame_timeout_ms: 1000
   idle_timeout_ms: 3000
   reconnect_ms: 500
+  # 视觉 pitch（抬头为正）-> 固件 IMU Pitch 的符号，只在发送边界生效。
+  # 哨兵（IMU 安装 .Pitch = 0）实机验证为 -1；IMU 倒装的车（如六轮步兵 .Pitch = 180）应改为 1。
+  # 首次上车先小角度点动：云台朝反方向走就取反，改这里即可，无需重新编译。
+  pitch_sign: -1
 serial_send_to_image_microseconds: 2000
 use_sim: false
 
