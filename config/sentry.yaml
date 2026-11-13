@@ -77,7 +77,7 @@ armor_detector:
       use_cuda_preproces: true
     armor_infer:
       model_type: tup
-      conf_threshold: 0.2
+      conf_threshold: 0.55
   number_classifier:
     enable: true
     model_path: ${ROOT_DIR}/model/mlp.onnx
@@ -97,16 +97,16 @@ armor_detector:
       max_ratio: 5.0
 
 armor_tracker:
-  lost_time_thres: 0.5
-  lost_time_thres_outpost: 2.0
-  tracking_thres: 10
+  lost_time_thres: 0.20
+  lost_time_thres_outpost: 0.5
+  tracking_thres: 4
   armor_match_gate: 300.0
   armor_match_gate_not_all_init: 1000.0
   armor_match_w_center_err: 5.0
   armor_match_w_angle_err: 10.0
   armor_match_w_side_length_err: 1.0
-  qxyz_common: [30.0, 30.0, 1.0]
-  qyaw_common: 100.0
+  qxyz_common: [3.0, 3.0, 0.3]
+  qyaw_common: 50.0
   qxyz_output: [1.0, 1.0, 0.5]
   qyaw_output: 0.01
   q_r: 0.0000001
@@ -136,7 +136,7 @@ auto_aim_fsm:
 very_aimer:
   type: mpc
   base_yaw_offset: -0.8
-  base_pitch_offset: 4.0
+  base_pitch_offset: -4.0
   # base_yaw_offset: -0.0
   # base_pitch_offset: -0.0
   sample_total_time: 1.0
@@ -146,8 +146,10 @@ very_aimer:
   fire_delay_min: 0.01
   fire_delay_max: 0.05
   
-  max_yaw_acc: 40
-  max_pitch_acc: 50
+  # 规划器加速度限制：rad/s²；不是串口角度或网页曲线使用的度制。
+  # yaw 5 ≈ 286.48 °/s²；pitch 3 ≈ 171.89 °/s²。
+  max_yaw_acc: 5
+  max_pitch_acc: 3
   
 
   prediction_delay: 0.00
@@ -240,6 +242,7 @@ camera:
     acquisition_frame_rate: 150
     exposure_time: 800
     gain: 16.9
+    gamma_enable: false
     gamma: 0.7 #Bayer用不了
     trigger_mode: Off
     trigger_source: ""
@@ -339,7 +342,7 @@ armor_omni:
   armor_detector:
     armor_infer:
       model_type: tup
-      conf_threshold: 0.5
+      conf_threshold: 0.45
     net_detector:
       backend: openvino
       openvino:

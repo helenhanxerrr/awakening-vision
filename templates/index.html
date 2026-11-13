@@ -8,7 +8,7 @@
     <link rel="preload" href="{{ url_for('static', filename='css/style.css', v='20260705a') }}" as="style" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260705a') }}" />
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script defer src="{{ url_for('static', filename='js/chart_logic.js', v='20260609d') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/chart_logic.js', v='20261109a') }}"></script>
     <script defer src="{{ url_for('static', filename='js/json_view.js', v='20260609d') }}"></script>
     <script defer src="{{ url_for('static', filename='js/main.js', v='20260705a') }}"></script>
   </head>
@@ -66,8 +66,8 @@
               <label><input type="checkbox" data-key="gimbal_pitch" checked /> Gimbal Pitch</label>
               <label><input type="checkbox" data-key="control_v_yaw" /> Control V Yaw</label>
               <label><input type="checkbox" data-key="control_v_pitch" /> Control V Pitch</label>
-              <label><input type="checkbox" data-key="control_a_yaw" /> Control A Yaw</label>
-              <label><input type="checkbox" data-key="control_a_pitch" /> Control A Pitch</label>
+              <label><input type="checkbox" data-key="control_a_yaw" /> Control A Yaw (°/s²)</label>
+              <label><input type="checkbox" data-key="control_a_pitch" /> Control A Pitch (°/s²)</label>
               <label><input type="checkbox" data-key="fly_time" /> Fly Time</label>
               <label><input type="checkbox" data-key="target_v_yaw" /> Target V Yaw</label>
               <label><input type="checkbox" data-key="target_v_roll" /> Target V Roll</label>

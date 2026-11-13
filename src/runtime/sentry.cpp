@@ -670,13 +670,14 @@ int main(int argc, char** argv) {
         if (serial) {
             // 下位机（control-2026 / STM32F4 / sentry_omni_gimbal）只接受「长度 + ID」帧：
             // 每帧 18 字节 = id1{float yaw, float pitch} + id2{int32 fire_flag}。
-            // 角度是绝对角（度、IMU 域），与固件 gimbal_ctrl_cmd 的语义一致；
+            // 角度是绝对角（度）：yaw 同向；视觉 pitch 抬头为正，固件 IMU Pitch 抬头为负。
+            // 仅在发送边界转换 pitch；姿态回传按原始 RPY 构造旋转，不能再次取反。
             // 没有有效目标时发全 0 空帧，固件据此判定无目标并交回遥控器控制。
             const bool send_target = cmd.appear && cmd.is_valid();
             if (send_target) {
                 serial->write(VisionCommand::encode(
                     static_cast<float>(cmd.yaw),
-                    static_cast<float>(cmd.pitch),
+                    static_cast<float>(-cmd.pitch),
                     cmd.fire_advice
                 ));
             } else {
