@@ -24,6 +24,8 @@ python -m pip install -r calibration/requirements.txt
 
 ## 1. 准备标定板与相机
 
+支持两种标定板：`config/calibration.yaml` 中 `pattern_type: circles` 使用对称圆点板，改为 `pattern_type: chessboard` 使用棋盘格。棋盘格的 `pattern_cols` / `pattern_rows` 是内角点数量（横向/纵向格子数各减一），`center_distance_mm` 填单个方格边长，单位毫米。拍照和离线标定必须使用同一份设置；自定义文件时两个命令都传 `--settings=你的设置文件`。棋盘格使用 OpenCV SB 亚像素角点检测。
+
 编辑 `config/calibration.yaml`：默认是 **10 列 × 7 行对称圆点板、相邻圆心 40 mm**。数字指圆心数量，不是格子数量。拍照时预览必须识别出全部圆点。与实际部署保持相同的分辨率、ROI、翻转、镜头焦距及对焦位置；关闭自动曝光，适当提高曝光以看清标定板。
 
 拍照程序直接读取机器人配置的 `camera`（默认 `config/sentry.yaml`），不用复制海康参数到同济格式。不要与 `sentry`/`standard` 同时占用相机和串口。输出目录必须尚不存在，程序会保存配置快照，防止混合不同采集参数。
@@ -41,6 +43,8 @@ build/calibration/calibration_capture config/sentry.yaml \
 ```
 
 按 `s` 保存，`q`/Esc 退出，Ctrl+C 也可结束。预览缩放及标记只用于显示，保存图像为原分辨率、无标记的 PNG。内参可移动标定板，采集至少 10 张（建议 20–30 张）覆盖画面中心、边缘、距离和倾角的照片。
+
+纯内参采集可添加 `--save-unrecognized=true`，允许先保存未识别的原图，离线标定会跳过检测失败的图片；这不保证图片能用于解算，仍需至少 10 张有效视角。外参模式不允许使用此选项。窗口会分别显示板类型/检测状态及姿态状态，纯内参检测失败不会提示缺少姿态。
 
 外参采集时**标定板固定、云台旋转中心位置固定**，分别改变 yaw 和 pitch，并停稳后保存；只转一个轴无法解算平移。保持板面朝向和圆点编号一致，避免对称板 180° 翻转。相机镜头、板或底盘移动后须重新采集。`pose ready` 才能保存外参样本；姿态缺失、过期、运动中或圆点不完整均拒绝保存，不填造单位四元数。
 

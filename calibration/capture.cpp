@@ -102,6 +102,7 @@ int main(int argc, char** argv) {
         "{output o | output/calibration/session | NEW session directory}"
         "{camera-key | camera | Camera mapping path}"
         "{intrinsics-only | false | Save images without opening serial}"
+        "{save-unrecognized | false | Allow unrecognized raw images in intrinsics-only mode}"
         "{headless | false | No GUI; requires interval and count}"
         "{interval | 0 | Automatic capture interval in seconds; zero means press s}"
         "{count | 0 | Stop after this many saved images; zero means unlimited}";
@@ -113,6 +114,7 @@ int main(int argc, char** argv) {
         const auto output = fs::path(cli.get<std::string>("output"));
         const auto camera_key = cli.get<std::string>("camera-key");
         const bool only_images = cli.get<bool>("intrinsics-only");
+        const bool save_unrecognized = cli.get<bool>("save-unrecognized");
         const bool headless = cli.get<bool>("headless");
         const double interval = cli.get<double>("interval");
         const int count = cli.get<int>("count");
@@ -121,6 +123,11 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Invalid interval/count; headless requires positive interval and count");
         const auto config = YAML::LoadFile(config_path);
         const auto settings = YAML::LoadFile(settings_path);
+        const auto pattern_type = settings["pattern_type"].as<std::string>("circles");
+        if (pattern_type != "circles" && pattern_type != "chessboard")
+            throw std::runtime_error("pattern_type must be circles or chessboard");
+        if (save_unrecognized && !only_images)
+            throw std::runtime_error("save-unrecognized requires intrinsics-only=true");
         const cv::Size pattern(settings["pattern_cols"].as<int>(), settings["pattern_rows"].as<int>());
         const double max_age = settings["pose_max_age_ms"].as<double>(100);
         const double window = settings["pose_stable_window_ms"].as<double>(300);
@@ -185,7 +192,9 @@ int main(int argc, char** argv) {
             cv::Mat image = frame.src_img;
             if (frame.format == PixelFormat::RGB) cv::cvtColor(frame.src_img, image, cv::COLOR_RGB2BGR);
             std::vector<cv::Point2f> centers;
-            const bool found = cv::findCirclesGrid(image, pattern, centers, cv::CALIB_CB_SYMMETRIC_GRID);
+            const bool found = pattern_type == "chessboard"
+                ? cv::findChessboardCornersSB(image, pattern, centers, cv::CALIB_CB_NORMALIZE_IMAGE)
+                : cv::findCirclesGrid(image, pattern, centers, cv::CALIB_CB_SYMMETRIC_GRID);
             auto pose = only_images ? std::optional<Pose>{} : buffer.stationary_at(
                 frame.timestamp, serial->statistics().connections, max_age, window, angle);
             int key = -1;
@@ -194,6 +203,8 @@ int main(int argc, char** argv) {
                 cv::drawChessboardCorners(drawing, pattern, centers, found);
                 const auto status = only_images ? "images only" : (pose ? "pose ready" : "pose missing/moving");
                 cv::putText(drawing, status, {20,40}, cv::FONT_HERSHEY_SIMPLEX, 1, {0,0,255}, 2);
+                cv::putText(drawing, pattern_type + (found ? ": detected" : ": not detected"),
+                            {20,80}, cv::FONT_HERSHEY_SIMPLEX, 1, {0,0,255}, 2);
                 cv::resize(drawing, drawing, {}, .5, .5);
                 cv::imshow("Calibration: s save, q quit", drawing);
                 key = cv::waitKey(1) & 255;
@@ -202,10 +213,14 @@ int main(int argc, char** argv) {
             const auto now = std::chrono::steady_clock::now();
             const bool automatic = interval > 0 && std::chrono::duration<double>(now-last_save).count() >= interval;
             if (key != 's' && !automatic) continue;
-            if (!found || (!only_images && !pose)) {
-                if (key == 's') std::cerr << "Not saved: need a complete circle grid and fresh stationary pose\n";
+            if ((!found && !save_unrecognized) || (!only_images && !pose)) {
+                if (key == 's') {
+                    if (!found) std::cerr << "Not saved: board not detected; check pattern_type, cols/rows, lighting\n";
+                    if (!only_images && !pose) std::cerr << "Not saved: need fresh stationary pose\n";
+                }
                 continue;
             }
+            if (!found) std::cerr << "Saving unrecognized raw image; offline calibration may skip it\n";
             save_pair(output, saved+1, image, pose);
             ++saved;
             last_save = now;

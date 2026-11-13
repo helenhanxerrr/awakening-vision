@@ -76,11 +76,21 @@ def quaternion_matrix(path):
 
 
 def board_settings(settings):
+    if settings.get("pattern_type", "circles") not in ("circles", "chessboard"):
+        raise ValueError("pattern_type must be circles or chessboard")
     cols, rows = int(settings["pattern_cols"]), int(settings["pattern_rows"])
     distance = float(settings["center_distance_mm"])
     if cols < 2 or rows < 2 or not math.isfinite(distance) or distance <= 0:
         raise ValueError("Invalid circle grid dimensions/distance")
     return cols, rows, distance
+
+
+def detect_board(image, settings):
+    cols, rows, _ = board_settings(settings)
+    if settings.get("pattern_type", "circles") == "chessboard":
+        # SB returns subpixel corners and handles low-contrast boards better.
+        return cv2.findChessboardCornersSB(image, (cols, rows), flags=cv2.CALIB_CB_NORMALIZE_IMAGE)
+    return cv2.findCirclesGrid(image, (cols, rows), flags=cv2.CALIB_CB_SYMMETRIC_GRID)
 
 
 def board_points(settings, robotworld=False):
@@ -121,7 +131,7 @@ def load_views(folder, settings, with_pose=False, preview=False):
         pose = None
         if with_pose:
             pose = mount.T @ quaternion_matrix(path.with_suffix(".txt")) @ mount
-        ok, points = cv2.findCirclesGrid(image, (cols, rows), flags=cv2.CALIB_CB_SYMMETRIC_GRID)
+        ok, points = detect_board(image, settings)
         print(f"{'success' if ok else 'skip'}: {path}", file=sys.stderr)
         if preview:
             drawing = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)

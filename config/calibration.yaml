@@ -1,4 +1,7 @@
-# 同济对称圆点板：列/行是圆心数量，距离为相邻圆心距离。
+# circles: 对称圆点板；chessboard: 棋盘格。缺省为 circles，兼容旧配置。
+pattern_type: circles
+# 圆点板填写圆心列/行数；棋盘格填写内角点列/行数（格子数减一）。
+# center_distance_mm：圆心间距，或棋盘格单个方格边长（毫米）。
 pattern_cols: 10
 pattern_rows: 7
 center_distance_mm: 40.0

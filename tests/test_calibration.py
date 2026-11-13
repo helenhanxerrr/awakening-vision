@@ -80,6 +80,26 @@ class CalibrationTests(unittest.TestCase):
         np.testing.assert_array_equal(np.array(transform["R"]).reshape(3, 3), np.eye(3))
         np.testing.assert_allclose(transform["t"], [.130, .004, .094])
 
+    def test_chessboard_detection_and_loading(self):
+        settings = {**self.settings, "pattern_type": "chessboard", "pattern_cols": 9,
+                    "pattern_rows": 6, "min_views": 3}
+        image = np.full((450, 600), 255, np.uint8)
+        for row in range(7):
+            for col in range(10):
+                if (row + col) % 2 == 0:
+                    image[60+row*40:60+(row+1)*40, 80+col*40:80+(col+1)*40] = 0
+        found, corners = cal.detect_board(image, settings)
+        self.assertTrue(found)
+        self.assertEqual(len(corners), 54)
+        with tempfile.TemporaryDirectory() as folder:
+            for i in range(3):
+                cv2.imencode('.png', image)[1].tofile(Path(folder) / f'{i}.png')
+            size, views = cal.load_views(folder, settings)
+            self.assertEqual(size, (600, 450))
+            self.assertEqual(len(views), 3)
+        with self.assertRaises(ValueError):
+            cal.detect_board(image, {**settings, "pattern_type": "unknown"})
+
     def test_bad_pose_and_degenerate_motion(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "pose.txt"
