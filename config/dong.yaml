@@ -258,7 +258,7 @@ rune_aimer:
 camera: 
   type: hik
   hik_camera:
-    target_sn: DA8419510
+    target_sn: DA1830801
     adc_bit_depth_enable: false
     adc_bit_depth: Bits_8
     pixel_format: BayerRG8 #RGB8Packed
@@ -270,8 +270,8 @@ camera:
     offset_y: 0
     acquisition_frame_rate_enable: true
     acquisition_frame_rate: 150
-    exposure_time: 6000
-    gain: 16.9089
+    exposure_time: 3000
+    gain: 16.0114
     gamma_enable: false
     gamma: 0.7 #Bayer用不了
     trigger_mode: Off

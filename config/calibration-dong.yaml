@@ -1,0 +1,19 @@
+# circles: 对称圆点板；chessboard: 棋盘格。缺省为 circles，兼容旧配置。
+pattern_type: chessboard
+# 圆点板填写圆心列/行数；棋盘格填写内角点列/行数（格子数减一）。
+# center_distance_mm：圆心间距，或棋盘格单个方格边长（毫米）。
+# 以下尺寸保留为示例；使用前按实物填写，不能从相机暗图推断。
+pattern_cols: 10
+pattern_rows: 7
+center_distance_mm: 40.0
+min_views: 10
+max_reprojection_rms_px: 2.0
+max_handeye_rotation_rms_deg: 3.0
+max_handeye_translation_rms_m: 0.02
+# capture 输出的四元数已是武科 gimbal->world，必须使用单位阵。
+# 导入同济 IMU 原始四元数时才填写实际 gimbal->imubody 旋转。
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+# 仅在云台停稳后按 s；姿态协议没有设备时间戳，因此不支持运动中精确同步。
+pose_max_age_ms: 100
+pose_stable_window_ms: 300
+pose_stable_angle_deg: 0.3
