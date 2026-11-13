@@ -3,7 +3,7 @@ enemy_color: blue
 bullet_speed: 21.0
 
 serial:
-  enable: false
+  enable: true
   device_name: /dev/ttyACM0 
   baud_rate: 115200
   char_size: 8
@@ -315,14 +315,15 @@ camera:
     camera_matrix:
       rows: 3
       cols: 3
-      data: [1814.19888,    0.     ,  730.27359,
-                0.     , 1807.37177,  529.57031,
-                0.     ,    0.     ,    1.     ]
+      data: [1865.641913044752, 0.0, 735.5042192490607,
+             0.0, 1866.7127673089242, 536.3146748667901,
+             0.0, 0.0, 1.0]
     distortion_model: plumb_bob
     distortion_coefficients:
       rows: 1
       cols: 5
-      data: [-0.089138, 0.114766, 0.000034, 0.000238, 0.000000]
+      data: [-0.05976764311906039, 0.14920651154797024,
+             -0.0008865195090253409, -0.00008154801535010237, 0.0]
     rectification_matrix:
       rows: 3
       cols: 3
@@ -332,9 +333,9 @@ camera:
     projection_matrix:
       rows: 3
       cols: 4
-      data: [1793.54229,    0.     ,  730.67194,    0.     ,
-                0.     , 1794.48784,  529.46193,    0.     ,
-                0.     ,    0.     ,    1.     ,    0.     ]
+      data: [1865.641913044752, 0.0, 735.5042192490607, 0.0,
+             0.0, 1866.7127673089242, 536.3146748667901, 0.0,
+             0.0, 0.0, 1.0, 0.0]
     #12mm
     # image_width: 1440
     # image_height: 1080

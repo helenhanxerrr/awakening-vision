@@ -3,9 +3,9 @@ pattern_type: chessboard
 # 圆点板填写圆心列/行数；棋盘格填写内角点列/行数（格子数减一）。
 # center_distance_mm：圆心间距，或棋盘格单个方格边长（毫米）。
 # 以下尺寸保留为示例；使用前按实物填写，不能从相机暗图推断。
-pattern_cols: 10
-pattern_rows: 7
-center_distance_mm: 40.0
+pattern_cols: 11
+pattern_rows: 8
+center_distance_mm: 35.0
 min_views: 10
 max_reprojection_rms_px: 2.0
 max_handeye_rotation_rms_deg: 3.0
