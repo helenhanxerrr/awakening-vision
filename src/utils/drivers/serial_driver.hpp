@@ -11,6 +11,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -26,6 +27,7 @@ public:
         size_t read_buf_size = 4096;
         int telemetry_gimbal_id = -1, telemetry_shoot_id = -1;
         int frame_timeout_ms = 1000, idle_timeout_ms = 3000, reconnect_ms = 500;
+        int command_tx_hz = 100, command_timeout_ms = 500;
         void load(const YAML::Node& c) {
             device_name = c["device_name"].as<std::string>();
             baud_rate = c["baud_rate"].as<unsigned int>(115200);
@@ -36,9 +38,12 @@ public:
             frame_timeout_ms = c["frame_timeout_ms"].as<int>(1000);
             idle_timeout_ms = c["idle_timeout_ms"].as<int>(3000);
             reconnect_ms = c["reconnect_ms"].as<int>(500);
+            command_tx_hz = c["command_tx_hz"].as<int>(100);
+            command_timeout_ms = c["command_timeout_ms"].as<int>(500);
             if (device_name.empty() || baud_rate == 0 || char_size != 8
                 || read_buf_size == 0 || read_buf_size > 65536
-                || frame_timeout_ms <= 0 || idle_timeout_ms <= 0 || reconnect_ms <= 0)
+                || frame_timeout_ms <= 0 || idle_timeout_ms <= 0 || reconnect_ms <= 0
+                || command_tx_hz <= 0 || command_tx_hz > 1000 || command_timeout_ms <= 0)
                 throw std::invalid_argument("invalid telemetry serial parameters (8-bit data required)");
             const bool unknown = telemetry_gimbal_id == -1 && telemetry_shoot_id == -1;
             const bool valid = telemetry_gimbal_id > 0 && telemetry_gimbal_id <= 32767
@@ -55,7 +60,7 @@ public:
                 timeouts_.load(), framing_errors_.load()};
     }
     SerialDriver(const YAML::Node& config, Scheduler& scheduler)
-        : scheduler_(scheduler), port_(io_), timer_(io_) {
+        : scheduler_(scheduler), port_(io_), timer_(io_), command_timer_(io_) {
         params_.load(config);
     }
     ~SerialDriver() { stop(); }
@@ -107,6 +112,25 @@ public:
         });
         return true;
     }
+    // Ported from the in-team SrmLink: the vision loop only replaces the latest
+    // command, while the IO thread transmits at a fixed rate. timeout_data must
+    // keep the last valid angles and disable firing.
+    bool set_latest_command(
+        const std::vector<uint8_t>& data,
+        const std::vector<uint8_t>& timeout_data
+    ) {
+        if (!connected_.load(std::memory_order_acquire) || data.empty() || timeout_data.empty())
+            return false;
+        std::lock_guard<std::mutex> lock(command_mutex_);
+        latest_command_ = data;
+        timeout_command_ = timeout_data;
+        last_command_update_ = TelemetryStream::Clock::now();
+        return true;
+    }
+    std::optional<std::pair<float, float>> latest_gimbal_angles() const {
+        std::lock_guard<std::mutex> lock(telemetry_mutex_);
+        return latest_gimbal_angles_;
+    }
 private:
     // 只有配置了同济状态回传 ID 才启用严格组帧解析；未配置的用途
     // （例如 radar_detect 的裁判/图传串口）按纯字节流处理，不做帧同步判定。
@@ -140,8 +164,18 @@ private:
         if (ending_) return;
         ending_ = true;
         connected_.store(false, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(command_mutex_);
+            if (!timeout_command_.empty()) {
+                latest_command_ = timeout_command_;
+                last_command_update_ = TelemetryStream::Clock::now();
+            } else {
+                latest_command_.clear();
+            }
+        }
         boost::system::error_code ignored;
         timer_.cancel(ignored);
+        command_timer_.cancel(ignored);
         if (port_.is_open()) {
             port_.cancel(ignored);
             port_.close(ignored);
@@ -167,6 +201,27 @@ private:
                 if (!write_queue_.empty()) do_write(gen);
             }
         );
+    }
+    void command_tick(uint64_t gen) {
+        command_timer_.expires_after(std::chrono::microseconds(1000000 / active_.command_tx_hz));
+        command_timer_.async_wait([this, gen](const boost::system::error_code& ec) {
+            if (ec || ending_ || gen != generation_.load(std::memory_order_acquire)) return;
+            std::vector<uint8_t> command;
+            {
+                std::lock_guard<std::mutex> lock(command_mutex_);
+                if (!latest_command_.empty()) {
+                    const auto now = TelemetryStream::Clock::now();
+                    const bool stale = now - last_command_update_
+                        >= std::chrono::milliseconds(active_.command_timeout_ms);
+                    command = stale ? timeout_command_ : latest_command_;
+                }
+            }
+            if (!command.empty() && write_queue_.empty()) {
+                write_queue_.push_back(std::move(command));
+                do_write(gen);
+            }
+            command_tick(gen);
+        });
     }
     void watchdog() {
         timer_.expires_after(std::chrono::milliseconds(20));
@@ -220,6 +275,10 @@ private:
         const bool valid = TongjiTelemetry::decode(p, n, active_.telemetry_gimbal_id,
                                                    active_.telemetry_shoot_id, state);
         if (!valid) ++invalid_;
+        if (valid) {
+            std::lock_guard<std::mutex> lock(telemetry_mutex_);
+            latest_gimbal_angles_ = std::make_pair(state.yaw, state.pitch);
+        }
         if (valid && publish_) {
             std::vector<uint8_t> frame;
             frame.reserve(n + 2);
@@ -251,6 +310,7 @@ private:
                     io_.restart();
                     read();
                     watchdog();
+                    command_tick(generation_.load(std::memory_order_acquire));
                     io_.run();
                 }
             } catch (const std::exception& error) {
@@ -271,17 +331,21 @@ private:
     boost::asio::io_context io_;
     boost::asio::serial_port port_;
     boost::asio::steady_timer timer_;
+    boost::asio::steady_timer command_timer_;
     TelemetryStream stream_;
     std::vector<uint8_t> read_buf_;
     std::deque<std::vector<uint8_t>> write_queue_;
+    std::vector<uint8_t> latest_command_, timeout_command_;
+    std::optional<std::pair<float, float>> latest_gimbal_angles_;
     static constexpr size_t kMaxQueuedFrames = 8;
     std::atomic<uint64_t> generation_{0};
     std::atomic<bool> connected_{false};
     bool ending_ = true;
-    TelemetryStream::Clock::time_point last_rx_{}, last_log_{};
+    TelemetryStream::Clock::time_point last_rx_{}, last_log_{}, last_command_update_{};
     std::atomic<bool> stop_requested_{true};
     std::atomic<uint64_t> frames_{0}, invalid_{0}, connections_{0}, timeouts_{0}, framing_errors_{0};
-    std::mutex lifecycle_, retry_mutex_;
+    std::mutex lifecycle_, retry_mutex_, command_mutex_;
+    mutable std::mutex telemetry_mutex_;
     std::condition_variable retry_cv_;
     std::thread thread_;
 };
