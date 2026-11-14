@@ -1,5 +1,6 @@
 #include "utils/drivers/command_protocol.hpp"
 #include "utils/drivers/serial_driver.hpp"
+#include "utils/drivers/vision_command_guard.hpp"
 #include <cassert>
 #include <cstring>
 #include <fcntl.h>
@@ -90,8 +91,61 @@ void command_tests() {
     const auto g = VisionCommand::encode(0.0f, 0.0f, false);
     assert(g.size() == 18);
     assert(g[14] == 0x00 && g[17] == 0x00);                        // fire_flag = 0
+    assert(VisionCommand::encode_hold(1.0f, -2.0f) == VisionCommand::encode(1.0f, -2.0f, false));
+    const auto zero_hold = VisionCommand::encode_hold(0.0f, 0.0f);
+    assert(zero_hold != g && zero_hold[14] == 0x00 && zero_hold[17] == 0x00);
     assert(VisionCommand::encode_idle() == g);                     // 无目标时的空帧
     std::cout << "PASS: command frame layout (18B: len/id1/yaw/pitch/id2/fire)\n";
+}
+void command_guard_tests() {
+    VisionCommandGuard::Params params;
+    params.acquire_ms = 50;
+    params.fire_settle_ms = 20;
+    params.max_yaw_jump_deg = 4.0;
+    params.max_pitch_jump_deg = 4.0;
+    params.max_yaw_rate_deg_s = 1000.0;
+    params.max_pitch_rate_deg_s = 1000.0;
+    params.filter_time_constant_s = 0.0;
+    params.fire_alignment_tolerance_deg = 0.1;
+    VisionCommandGuard guard(params);
+    const auto t = VisionCommandGuard::Clock::now();
+    guard.seed(0.0, 0.0, t);
+    VisionCommandGuard::Input input {
+        .target = true,
+        .target_key = 2,
+        .yaw_deg = 10.0,
+        .pitch_deg = -2.0,
+        .distance_m = 5.0,
+        .fire = true,
+    };
+    auto output = guard.update(input, t);
+    assert(!output.tracking && !output.fire);
+    output = guard.update(input, t + 49ms);
+    assert(!output.tracking && output.yaw_deg == 0.0);
+    output = guard.update(input, t + 50ms);
+    assert(output.tracking && !output.fire && output.yaw_deg == 1.0);
+    output = guard.update(input, t + 60ms);
+    assert(output.tracking && !output.fire && output.yaw_deg == 10.0);
+    output = guard.update(input, t + 71ms);
+    assert(output.tracking && output.fire);
+
+    input.yaw_deg = 20.0;
+    output = guard.update(input, t + 72ms);
+    assert(!output.tracking && !output.fire && output.state == VisionCommandGuard::State::AngleJump);
+    input.distance_m = 0.12;
+    output = guard.update(input, t + 73ms);
+    assert(!output.tracking && output.state == VisionCommandGuard::State::InvalidMeasurement);
+    input.distance_m = 5.0;
+    input.yaw_deg = 10.0;
+    output = guard.update(input, t + 74ms);
+    assert(!output.tracking);
+    input.target_key = 6;
+    output = guard.update(input, t + 75ms);
+    assert(!output.tracking && output.state == VisionCommandGuard::State::TargetChanged);
+    input.target = false;
+    output = guard.update(input, t + 76ms);
+    assert(output.has_output && !output.tracking && !output.fire && output.yaw_deg == 10.0);
+    std::cout << "PASS: command guard acquisition, range/jump/key rejection, slew and fire interlock\n";
 }
 struct Pty {
     int master; std::string slave;
@@ -99,6 +153,18 @@ struct Pty {
         assert(grantpt(master)==0 && unlockpt(master)==0);slave=ptsname(master); }
     ~Pty(){if(master>=0)close(master);}
 };
+Bytes read_for(int fd, std::chrono::milliseconds duration) {
+    Bytes bytes;
+    auto deadline=std::chrono::steady_clock::now()+duration;
+    while(std::chrono::steady_clock::now()<deadline) {
+        pollfd pfd{fd,POLLIN,0};
+        if(poll(&pfd,1,5)<=0) continue;
+        uint8_t chunk[512];
+        const auto n=::read(fd,chunk,sizeof(chunk));
+        if(n>0) bytes.insert(bytes.end(),chunk,chunk+n);
+    }
+    return bytes;
+}
 YAML::Node config(const std::string& device) {
     auto c=YAML::Load("baud_rate: 115200\nchar_size: 8\nread_buf_size: 64\ntelemetry_gimbal_id: 7\ntelemetry_shoot_id: 9\nframe_timeout_ms: 80\nidle_timeout_ms: 1000\nreconnect_ms: 30\n");
     c["device_name"]=device;return c;
@@ -114,8 +180,45 @@ void driver_tests() {
     pollfd fd{p.master,POLLIN,0};assert(poll(&fd,1,200)>0);
     uint8_t tx[64]{};const ssize_t tx_len=::read(p.master,tx,sizeof(tx));
     assert(tx_len==(ssize_t)cmd.size());assert(std::memcmp(tx,cmd.data(),cmd.size())==0);
+    // SrmLink-style TX: overwrite pending values, send at a fixed rate, then
+    // fall back to the same angles with fire disabled after the heartbeat timeout.
+    Pty latest;Scheduler latest_scheduler;auto latest_config=config(latest.slave);
+    latest_config["command_tx_hz"]=100;latest_config["command_timeout_ms"]=60;
+    SerialDriver latest_driver(latest_config,latest_scheduler);latest_driver.start<Tag>("latest");
+    wait_for([&]{return latest_driver.statistics().connections==1;});
+    const auto old_cmd=VisionCommand::encode(3.0f,4.0f,true);
+    const auto newest_cmd=VisionCommand::encode(5.0f,6.0f,true);
+    const auto safe_cmd=VisionCommand::encode_hold(5.0f,6.0f);
+    assert(latest_driver.set_latest_command(old_cmd,VisionCommand::encode_hold(3.0f,4.0f)));
+    assert(latest_driver.set_latest_command(newest_cmd,safe_cmd));
+    auto scheduled=read_for(latest.master,45ms);
+    assert(scheduled.size()>=newest_cmd.size()*2 && scheduled.size()%newest_cmd.size()==0);
+    assert(std::memcmp(scheduled.data()+scheduled.size()-newest_cmd.size(),newest_cmd.data(),newest_cmd.size())==0);
+    auto stale=read_for(latest.master,80ms);
+    assert(stale.size()>=safe_cmd.size() && stale.size()%safe_cmd.size()==0);
+    assert(std::memcmp(stale.data()+stale.size()-safe_cmd.size(),safe_cmd.data(),safe_cmd.size())==0);
+    latest_driver.stop();
+    // A reconnect must never replay the last armed frame, even when it occurs
+    // before command_timeout_ms. Its first transmitted state keeps angles but clears fire.
+    Pty reconnect;Scheduler reconnect_scheduler;auto reconnect_config=config(reconnect.slave);
+    reconnect_config["command_tx_hz"]=10;reconnect_config["command_timeout_ms"]=500;
+    reconnect_config["frame_timeout_ms"]=20;
+    SerialDriver reconnect_driver(reconnect_config,reconnect_scheduler);
+    reconnect_driver.start<Tag>("reconnect_safe");
+    wait_for([&]{return reconnect_driver.statistics().connections==1;});
+    assert(reconnect_driver.set_latest_command(newest_cmd,safe_cmd));
+    auto armed=read_for(reconnect.master,130ms);
+    assert(armed.size()>=newest_cmd.size() && armed.size()%newest_cmd.size()==0);
+    assert(std::memcmp(armed.data()+armed.size()-newest_cmd.size(),newest_cmd.data(),newest_cmd.size())==0);
+    const uint8_t partial=30;assert(::write(reconnect.master,&partial,1)==1);
+    wait_for([&]{return reconnect_driver.statistics().connections>=2;});
+    auto after_reconnect=read_for(reconnect.master,150ms);
+    assert(after_reconnect.size()>=safe_cmd.size() && after_reconnect.size()%safe_cmd.size()==0);
+    assert(std::memcmp(after_reconnect.data(),safe_cmd.data(),safe_cmd.size())==0);
+    reconnect_driver.stop();
     auto wire=frame();assert(::write(p.master,wire.data(),wire.size())==30);
     wait_for([&]{return d.statistics().frames==1;});assert(d.statistics().invalid==0);
+    const auto angles=d.latest_gimbal_angles();assert(angles && angles->first==12.5f && angles->second==-2.5f);
     // 只投递完整有效帧；业务层不应接收非法帧或跨连接半包。
     wait_for([&]{return scheduler.pushed_bytes==30;});
     assert(scheduler.pushed==1);
@@ -154,4 +257,4 @@ void driver_tests() {
     wait_for([&]{return raw_scheduler.pushed_bytes==3;});raw_driver.stop();
     std::cout<<"PASS: PTY command TX + telemetry RX/publish, reject, timeout/framing reconnect, start/restart/concurrent stop, invalid config, idle timeout, unplug\n";
 }
-int main(){protocol_tests();command_tests();driver_tests();}
+int main(){protocol_tests();command_tests();command_guard_tests();driver_tests();}

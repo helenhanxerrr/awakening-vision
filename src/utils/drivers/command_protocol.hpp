@@ -16,6 +16,7 @@ public:
     static constexpr int16_t kGimbalId = 1;
     static constexpr int16_t kShootId = 2;
     static constexpr std::size_t kFrameSize = 18;
+    static constexpr float kZeroHoldNudgeDeg = 0.0001f;
     static std::vector<uint8_t> encode(float yaw_deg, float pitch_deg, bool fire) {
         std::vector<uint8_t> out;
         out.reserve(kFrameSize);
@@ -27,8 +28,14 @@ public:
         put_i32(out, fire ? 1 : 0);
         return out;
     }
-    // 无有效目标时发送的空帧：三个字段全 0，固件据此判为「没有目标」
-    // （见 sentry_omni_gimbal/robot.c 的 has_non_zero_data），云台交回遥控器控制。
+    static std::vector<uint8_t> encode_hold(float yaw_deg, float pitch_deg) {
+        // Firmware uses an all-zero payload as the only idle marker. Preserve
+        // hold semantics at the exact origin with a mechanically negligible nudge.
+        if (yaw_deg == 0.0f && pitch_deg == 0.0f) yaw_deg = kZeroHoldNudgeDeg;
+        return encode(yaw_deg, pitch_deg, false);
+    }
+    // 仅在尚未产生任何有效角度时使用。已锁定过目标后应使用 encode_hold，
+    // 避免短暂丢帧在视觉/遥控模式之间反复切换。
     static std::vector<uint8_t> encode_idle() {
         return encode(0.0f, 0.0f, false);
     }

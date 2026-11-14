@@ -4,7 +4,7 @@ bullet_speed: 21.0
 
 serial:
   enable: true
-  device_name: /dev/ttyACM0 
+  device_name: /dev/serial/by-id/usb-YueLuEmbedded_Vision_Comm_port_3855315E3439-if00
   baud_rate: 115200
   char_size: 8
   read_buf_size: 4096
@@ -16,6 +16,20 @@ serial:
   frame_timeout_ms: 1000
   idle_timeout_ms: 3000
   reconnect_ms: 500
+  # Mirror the proven in-team SrmLink behavior: fixed-rate, latest-value-only TX.
+  command_tx_hz: 100
+  command_timeout_ms: 500
+  command_guard:
+    acquire_ms: 120
+    fire_settle_ms: 150
+    min_distance_m: 0.5
+    max_distance_m: 20.0
+    max_yaw_jump_deg: 4.0
+    max_pitch_jump_deg: 4.0
+    max_yaw_rate_deg_s: 90.0
+    max_pitch_rate_deg_s: 60.0
+    filter_time_constant_s: 0.03
+    fire_alignment_tolerance_deg: 0.5
   # 视觉 pitch（抬头为正）-> 固件 IMU Pitch 的符号，只在发送边界生效。
   # 哨兵（IMU 安装 .Pitch = 0）实机验证为 -1；IMU 倒装的车（如六轮步兵 .Pitch = 180）应改为 1。
   # 首次上车先小角度点动：云台朝反方向走就取反，改这里即可，无需重新编译。
@@ -28,8 +42,8 @@ record:
 
 tf:
   camera_in_gimbal:
-    t: [0.00,0.00,0.08]
-    R: [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]
+    t: [0.1208310801128429, 0.0005078557103017583, 0.0395482404170795]
+    R: [0.9989122197140633, 0.005092530601463974, -0.04635130459864157, -0.005452938575046963, 0.9999558517339936, -0.007652453452340335, 0.046310287915534154, 0.007896880081185633, 0.9988958887282317]
   shoot_in_gimbal:
     t: [0.1,0.0,0.0]
     R: [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0]
@@ -129,7 +143,7 @@ armor_tracker:
 
   lost_time_thres: 0.5
   lost_time_thres_outpost: 2.0
-  tracking_thres: 3
+  tracking_thres: 10
 
   armor_match_gate: 50.0
   armor_match_gate_not_all_init: 100.0
@@ -167,8 +181,8 @@ auto_aim_fsm:
 
 very_aimer:
   type: mpc
-  base_yaw_offset: -2.0
-  base_pitch_offset: 0.0
+  base_yaw_offset: 0.3
+  base_pitch_offset: -2.3
   # base_yaw_offset: -0.0
   # base_pitch_offset: -0.0
   sample_total_time: 1.0

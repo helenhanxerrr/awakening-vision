@@ -5,7 +5,7 @@ pattern_type: chessboard
 # 以下尺寸保留为示例；使用前按实物填写，不能从相机暗图推断。
 pattern_cols: 11
 pattern_rows: 8
-center_distance_mm: 35.0
+center_distance_mm: 30.0
 min_views: 10
 max_reprojection_rms_px: 2.0
 max_handeye_rotation_rms_deg: 3.0
